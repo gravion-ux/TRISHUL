@@ -1,0 +1,85 @@
+# Runtime configuration for TRISHUL.
+#
+# Every value here can be overridden with an environment variable. The AI
+# section decides which provider the engine talks to; the LOCAL edition points
+# at a local model server, the PROVIDER edition at a cloud API.
+
+app:
+  name: TRISHUL
+  version: "2.0.0"
+  db_path: data/trishul.db
+  reports_dir: reports
+  plugins_dir: plugins
+  log_level: INFO
+  host: 127.0.0.1
+  port: 8000
+  cors_origins:
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+
+scan:
+  default_mode: deep
+  timeout_seconds: 900
+  thread_limit: 8
+  max_concurrent_scans: 3
+  ffuf_max_requests: 2000
+  ffuf_status_filter:
+    - 200
+    - 204
+    - 301
+    - 302
+    - 307
+    - 401
+    - 403
+  wordlist: config/wordlists/common.txt
+  param_wordlist: config/wordlists/params.txt
+
+tools:
+  httpx: httpx
+  nuclei: nuclei
+  ffuf: ffuf
+  nmap: nmap
+  ffuf_wordlist: config/wordlists/common.txt
+  param_wordlist: config/wordlists/params.txt
+  allowed_binaries:
+    - httpx
+    - nuclei
+    - ffuf
+    - nmap
+    - git
+    - go
+
+# AI provider configuration.
+#   edition: local   -> Ollama / LM Studio / llama.cpp
+#   edition: provider -> OpenAI / Anthropic / Gemini / OpenAI-compatible
+ai:
+  edition: local
+  provider: ollama
+  model: llama3.1:8b
+  base_url: http://localhost:11434
+  timeout_seconds: 120
+  max_tokens: 2048
+  temperature: 0.2
+  fail_open: true
+
+auth:
+  enabled: true
+  username: admin
+  password: ""
+  token_ttl_seconds: 86400
+
+security:
+  allow_private_targets: false
+  authorized_targets: []
+  rate_limit_requests: 120
+  rate_limit_window_seconds: 60
+  blocked_hostnames:
+    - 169.254.169.254
+    - metadata.google.internal
+    - metadata.goog
+
+integrations:
+  cache_ttl_seconds: 3600
+  rate_limit_per_minute: 30
+  timeout_seconds: 20
+  max_response_bytes: 512000

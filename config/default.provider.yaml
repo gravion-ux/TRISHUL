@@ -1,0 +1,94 @@
+# TRISHUL — PROVIDER edition configuration.
+#
+# This file is the complete configuration for a PROVIDER deployment: the AI is
+# a cloud service and the operator supplies their own key.
+#
+# Point the application at it with:
+#
+#     export TRISHUL_CONFIG=config/default.provider.yaml
+#
+# The release archive TRISHUL-PROVIDER.zip ships this file as
+# config/default.yaml, so it is used automatically without any environment
+# variable.
+#
+# The key itself is never stored in this file. Supply it through the
+# dashboard (encrypted at rest), or through OPENAI_API_KEY / ANTHROPIC_API_KEY
+# / GEMINI_API_KEY in the environment.
+
+app:
+  name: TRISHUL
+  version: "2.0.0"
+  db_path: data/trishul.db
+  reports_dir: reports
+  plugins_dir: plugins
+  log_level: INFO
+  host: 127.0.0.1
+  port: 8000
+  cors_origins:
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+
+scan:
+  default_mode: deep
+  timeout_seconds: 900
+  thread_limit: 8
+  max_concurrent_scans: 3
+  ffuf_max_requests: 2000
+  ffuf_status_filter:
+    - 200
+    - 204
+    - 301
+    - 302
+    - 307
+    - 401
+    - 403
+  wordlist: config/wordlists/common.txt
+  param_wordlist: config/wordlists/params.txt
+
+tools:
+  httpx: httpx
+  nuclei: nuclei
+  ffuf: ffuf
+  nmap: nmap
+  ffuf_wordlist: config/wordlists/common.txt
+  param_wordlist: config/wordlists/params.txt
+  allowed_binaries:
+    - httpx
+    - nuclei
+    - ffuf
+    - nmap
+    - git
+    - go
+
+# The PROVIDER edition: a cloud model. The operator supplies the key.
+ai:
+  edition: provider
+  provider: openai
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  timeout_seconds: 120
+  max_tokens: 2048
+  temperature: 0.2
+  fail_open: true
+
+auth:
+  enabled: true
+  username: admin
+  password: ""
+  token_ttl_seconds: 86400
+
+security:
+  allow_private_targets: false
+  authorized_targets: []
+  rate_limit_requests: 120
+  rate_limit_window_seconds: 60
+  blocked_hostnames:
+    - 169.254.169.254
+    - metadata.google.internal
+    - metadata.goog
+
+integrations:
+  cache_ttl_seconds: 3600
+  rate_limit_per_minute: 30
+  timeout_seconds: 20
+  max_response_bytes: 512000

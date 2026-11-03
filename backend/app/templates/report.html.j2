@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TRISHUL Security Assessment Report — {{ scan.target }}</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --card: #161b22;
+        --ink: #e6edf3;
+        --muted: #8b949e;
+        --line: #30363d;
+        --accent: #d29922;
+        --critical: #f85149;
+        --high: #ff7b72;
+        --medium: #d29922;
+        --low: #3fb950;
+        --informational: #58a6ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: var(--bg);
+        color: var(--ink);
+        margin: 0;
+        padding: 2rem;
+        line-height: 1.55;
+      }
+      .wrap { max-width: 1080px; margin: 0 auto; }
+      .banner {
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        color: var(--accent);
+        font-size: 0.8rem;
+        margin-bottom: 1.25rem;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+      }
+      h1 { margin: 0 0 0.5rem; font-size: 1.5rem; }
+      h3 { margin: 1.1rem 0 0.4rem; font-size: 1rem; color: var(--accent); }
+      .meta { color: var(--muted); font-size: 0.85rem; }
+      .badge {
+        display: inline-block;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+        color: #0d1117;
+        font-size: 0.75rem;
+        font-weight: 700;
+        margin-right: 0.5rem;
+        vertical-align: middle;
+      }
+      .Critical { background: var(--critical); }
+      .High { background: var(--high); }
+      .Medium { background: var(--medium); }
+      .Low { background: var(--low); }
+      .Informational { background: var(--informational); }
+      code {
+        background: #21262d;
+        padding: 0.1rem 0.35rem;
+        border-radius: 4px;
+        font-size: 0.85em;
+      }
+      table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
+      th, td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; font-size: 0.85rem; }
+      th { color: var(--muted); font-weight: 600; }
+      ol, ul { margin: 0.4rem 0 0.4rem 1.2rem; padding: 0; }
+      .ai {
+        border-left: 3px solid var(--accent);
+        padding-left: 0.75rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+      }
+      footer { color: var(--muted); font-size: 0.78rem; margin-top: 2rem; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="banner">TRISHUL — AUTHORIZED SECURITY TESTING ONLY</div>
+
+      <div class="card">
+        <h1>Security Assessment Report</h1>
+        <p class="meta">
+          Target: <strong>{{ scan.target }}</strong><br />
+          Scan ID: <code>{{ scan.id }}</code><br />
+          Mode: <code>{{ scan.mode.value }}</code> &middot;
+          Status: <code>{{ scan.status.value }}</code><br />
+          Started: <code>{{ scan.created_at }}</code><br />
+          AI provider: <code>{{ scan.ai_provider }}</code>
+          {% if scan.ai_model %}(<code>{{ scan.ai_model }}</code>){% endif %}<br />
+          Findings: <code>{{ scan.findings|length }}</code>
+        </p>
+      </div>
+
+      {% if executive_summary %}
+      <div class="card">
+        <h3>Executive Summary</h3>
+        <p>{{ executive_summary }}</p>
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <h3>Severity Breakdown</h3>
+        {% set ns = namespace(counts={}) %}
+        {% for item in scan.findings %}
+          {% set _ = ns.counts.update({item.severity.value: ns.counts.get(item.severity.value, 0) + 1}) %}
+        {% endfor %}
+        <table>
+          <thead>
+            <tr><th>Severity</th><th>Count</th></tr>
+          </thead>
+          <tbody>
+            {% for severity in ["Critical", "High", "Medium", "Low", "Informational"] %}
+            <tr>
+              <td><span class="badge {{ severity }}">{{ severity }}</span></td>
+              <td>{{ ns.counts.get(severity, 0) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% for finding in scan.findings %}
+      <div class="card">
+        <span class="badge {{ finding.severity.value }}">{{ finding.severity.value }}</span>
+        <strong>{{ finding.title }}</strong>
+        <p class="meta">
+          Asset: <code>{{ finding.asset }}</code> &middot;
+          Confidence: <code>{{ finding.confidence }}</code>
+          (baseline <code>{{ finding.baseline_confidence }}</code>) &middot;
+          Verified: <code>{{ finding.verified }}</code> &middot;
+          Source: <code>{{ finding.source }}</code>
+          {% if finding.ai_adjusted %} &middot; <code>AI adjudicated</code>{% endif %}
+        </p>
+        <p>{{ finding.description }}</p>
+
+        {% if finding.ai_analysis %}
+        <h3>AI Analysis</h3>
+        <div class="ai">{{ finding.ai_analysis }}</div>
+        {% endif %}
+
+        {% if finding.evidence %}
+        <h3>Evidence</h3>
+        <ul>
+          {% for item in finding.evidence %}
+          <li><strong>{{ item.source }}</strong>: {{ item.summary }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if finding.poc %}
+        <h3>Steps to Reproduce (non-destructive)</h3>
+        <ol>
+          {% for step in finding.poc.steps_to_reproduce %}
+          <li>{{ step }}</li>
+          {% endfor %}
+        </ol>
+        <h3>Request Example</h3>
+        <p><code>{{ finding.poc.request_example }}</code></p>
+        <h3>Impact</h3>
+        <p>{{ finding.poc.impact }}</p>
+        <h3>Remediation</h3>
+        <p>{{ finding.poc.remediation }}</p>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="card"><p>No findings were produced by this scan.</p></div>
+      {% endfor %}
+
+      <footer>
+        Produced by TRISHUL — an authorized security testing platform.
+        Every validation step in this report is non-destructive.
+      </footer>
+    </div>
+  </body>
+</html>

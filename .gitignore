@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------------------
+# TRISHUL — ignore rules
+#
+# Nothing in this list may ever be committed: it holds credentials, local
+# databases, scan output or build artefacts.
+# ---------------------------------------------------------------------------
+
+# --- Secrets and local state -------------------------------------------------
+data/*
+!data/.gitkeep
+*.master_key
+.master_key
+.api_secret
+admin-credentials.txt
+credentials.enc
+*.key
+*.pem
+*.env
+.env
+.env.*
+
+# --- Databases ---------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Scan output and reports -------------------------------------------------
+reports/*
+!reports/.gitkeep
+scan-artifacts/
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# --- Node / frontend ---------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Editors and OS ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Archives ----------------------------------------------------------------
+*.zip
+*.tar.gz
+*.tgz
+
+# --- Tooling scratch ---------------------------------------------------------
+*.log
+tmp/
+temp/
