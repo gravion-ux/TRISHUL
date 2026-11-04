@@ -31,7 +31,7 @@ class HealthService:
                 "provider": config.provider.value if config else "none",
                 "model": config.model if config else "",
                 "reachable": False,
-                "message": "Not probed yet — use POST /api/providers/test.",
+                "message": "Not probed yet - use POST /api/providers/test.",
             },  # type: ignore[dict-item]
             autofix_commands=self.tools.autofix_commands(),
         )

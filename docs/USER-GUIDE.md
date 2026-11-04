@@ -1,420 +1,418 @@
-# TRISHUL — User guide
+# TRISHUL User Guide
 
-TRISHUL assesses a target you are authorized to test, verifies what it finds,
-and produces reports you can hand to a developer or submit to a bug bounty
-program.
+This guide takes you from a fresh machine to a finished, reported scan. It assumes Kali
+Linux (Debian and Ubuntu work the same way; the backend and CLI also run on other POSIX
+hosts, but the installer is Linux-first).
 
-> **Before anything else:** you need written permission for the target. TRISHUL
-> asks for an authorization note on every scan and stores it with the results.
-> See [SECURITY.md](SECURITY.md) for the full policy.
+> **Authorized testing only.** TRISHUL refuses to start a scan without an explicit
+> authorization confirmation and a note. Use it on hosts you own or have written
+> permission to test.
 
 ---
 
 ## 1. Install
 
-### Kali Linux / Debian / Ubuntu
-
 ```bash
-git clone https://github.com/<your-account>/TRISHUL.git
 cd TRISHUL
-chmod +x install.sh update.sh
 ./install.sh
 ```
 
-The installer:
+The installer is idempotent — run it again any time to repair a broken installation. It:
 
-1. Checks the Python version (3.11 or newer).
-2. Creates `.venv` and installs the Python dependencies.
-3. Installs the four scanners — from the distribution packages when they are
-   available, otherwise built from source with Go.
-4. Creates `data/`, `reports/` and `config/`.
-5. Primes the nuclei template set.
-6. Prints the next steps.
+1. installs the system packages (`python3`, `python3-venv`, `python3-pip`, `git`, `curl`,
+   `wget`, `nmap`, `golang`, `nodejs`, `npm`) and `ffuf` when apt has it;
+2. builds `httpx`, `nuclei` and `ffuf` from source with Go;
+3. creates `.venv`, upgrades pip and installs `requirements.txt`;
+4. installs the `~/.local/bin/trishul` launcher;
+5. creates `data/`, `reports/` and `plugins/`;
+6. downloads the nuclei templates;
+7. installs and builds the dashboard;
+8. runs a health check and prints a ready/missing summary.
 
-Re-running it is safe: existing steps are skipped.
-
-### Manual install
+### Options
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# The four scanners
-sudo apt-get install -y nmap
-go install github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-go install github.com/ffuf/ffuf/v2@latest
-export PATH="$PATH:$(go env GOPATH)/bin"
+./install.sh --help               # full help
+./install.sh --local              # LOCAL edition: offers to pull an Ollama model
+./install.sh --ollama-model qwen2.5:7b-instruct   # pull a specific model instead
+./install.sh --no-frontend        # skip the dashboard build (API/CLI only hosts)
 ```
 
-### The dashboard (frontend)
+Network problems never abort the installer. If a step fails, the script warns and the
+final summary tells you exactly what is missing.
+
+### Put the launcher on your PATH
 
 ```bash
-cd frontend
-npm install
-npm run build      # produces frontend/dist/
+export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
 ```
 
-The backend serves `frontend/dist/` when it exists, so a build is all you
-need. For development, `npm run dev` gives you a hot-reloading server on
-port 5173; point it at the API with `VITE_API_BASE=http://localhost:8000`.
+Add that line to `~/.bashrc` to make it permanent — the installer already adds the Go
+path for you.
 
----
-
-## 2. First run
+### Check the installation
 
 ```bash
-source .venv/bin/activate
 trishul --health
 ```
 
-The health report shows the version, the edition, each scanner's path and
-version, and whether the AI is reachable.
-
-```
-███████████  ███████ ███    ██  ███████ ██   ██ ██    ██ ███████ 
-
-  Authorized security testing platform — Local and Provider editions
-
-  Version    : 2.0.0
-  Edition    : local
-  Platform   : linux
-  Ready      : yes
-
-  Tools:
-    ✓ httpx (required) — [INF] Current Version: v1.9.0
-    ✓ nmap (required) — Nmap version 7.94 ( https://nmap.org )
-    ✓ nuclei (required) — [INF] Nuclei Engine Version: v3.7.1
-    ✓ ffuf (required) — ffuf version: 2.1.0
-    ✓ python3 — Python 3.12.3
-    ✓ node — v24.14.0
-    ✓ npm — 11.9.0
-    ✓ git — git version 2.53.0
-
-  AI         : ollama / llama3.1:8b
-  AI status  : reachable
-```
-
-`Ready : no` means a required scanner is missing. The remediation commands are
-printed at the bottom of the report but are **never** executed automatically.
-
-If a scanner is missing, `--autofix` prints the exact install command:
-
-```bash
-trishul --autofix
-```
-
-It shows every command and asks before running anything.
+You should see the four scanning tools marked as present, the edition, and the AI
+provider with its reachability. Anything missing is listed with the command that fixes
+it.
 
 ---
 
-## 3. Configure the AI
+## 2. Choose your edition
 
-### Local (no cloud key)
+### LOCAL (AI on your machine, no key)
 
 ```bash
 ollama serve
 ollama pull llama3.1:8b
-
 trishul --provider-set ollama --model llama3.1:8b
 ```
 
-### Cloud
+### PROVIDER (AI in the cloud, your key)
 
 ```bash
-trishul --provider-set openai --model gpt-4o-mini --api-key "sk-..."
+export OPENAI_API_KEY='sk-...'
+trishul --provider-set openai --model gpt-4o-mini
 ```
 
-Or set the key in the environment and let TRISHUL pick it up:
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
-Keys stored through TRISHUL are encrypted at rest. See
-[PROVIDERS.md](PROVIDERS.md).
+Other providers work the same way — see [PROVIDERS.md](PROVIDERS.md).
 
 ---
 
-## 4. Run a scan
+## 3. Start the backend
+
+```bash
+source .venv/bin/activate
+python -m backend.app.main
+```
+
+The API listens on `http://127.0.0.1:8000` and prints where the generated administrator
+credentials were written:
+
+```
+[!] Generated administrator credentials written to .../data/admin-credentials.txt
+```
+
+On the first run, read them once:
+
+```bash
+cat data/admin-credentials.txt
+```
+
+Set `TRISHUL_ADMIN_USER` and `TRISHUL_ADMIN_PASSWORD` before starting to use your own
+credentials instead.
+
+Useful server flags:
+
+```bash
+python -m backend.app.main --port 8010       # different port
+python -m backend.app.main --host 0.0.0.0    # expose on the network (read SECURITY.md first)
+python -m backend.app.main --health          # JSON health report and exit
+python -m backend.app.main --migrate         # apply pending migrations and exit
+```
+
+---
+
+## 4. Run your first scan
+
+### From the CLI
 
 ```bash
 trishul example.com --mode deep
 ```
 
 ```
-  Authorized security testing platform — Local and Provider editions
+######## ########  ####  ######  ##     ## ##     ## ##
+   ##    ##     ##  ##  ##    ## ##     ## ##     ## ##
+   ##    ##     ##  ##  ##       ##     ## ##     ## ##
+   ##    ########   ##   ######  ######### ##     ## ##
+   ##    ##   ##    ##        ## ##     ## ##     ## ##
+   ##    ##    ##   ##  ##    ## ##     ## ##     ## ##
+   ##    ##     ## ####  ######  ##     ##  #######  ########
 
-  ⚠  AUTHORIZED SECURITY TESTING ONLY
+  Authorized security testing platform - Local and Provider editions
+
+  [!]  AUTHORIZED SECURITY TESTING ONLY
   "Hey kid, don't ride a horse that isn't yours"
 
-Target        : example.com
-Mode          : deep
-Authorization : TICKET-2026-0142
+  AI provider : ollama (llama3.1:8b) @ http://localhost:11434
+  Edition     : local
 
-Type 'yes' to confirm you are authorized to test this target: yes
+Type YES to confirm you are authorised to scan this target: YES
+Authorization note (ticket / program / scope reference): AC-2026-0142
 
-[recon   ] ████████████░░░░░░░░░░░░░░░░░░░░░░░░░░  32%
-[scan    ] ████████████████████████████░░░░░░░░░░░░░░░░░░  58%
-...
+[############################--] 100% report    Reports generated
 ```
 
-### Options
+The banner is drawn with plain ASCII characters only, so it renders
+identically on a UTF-8 terminal, on a legacy Windows code page (`cp437`,
+`cp1252`) and in a redirected log file. Characters that the host console
+cannot represent -- for example text produced by an AI model -- are
+degraded to `?` instead of raising an encoding error.
 
-| Flag | Meaning |
+The scan runs `Recon → Scan → Fuzz → Detect → Verify → PoC → Guide → Report`. The
+progress bar shows the current stage.
+
+Useful flags:
+
+| Flag | Effect |
 |---|---|
-| `--mode quick` | Faster pass: top ports, fewer templates, shorter fuzz. |
-| `--mode deep` | The default. Full port set, full template set. |
-| `--threads N` | Tool thread limit (1–32, default 8). |
-| `--timeout N` | Per-tool timeout in seconds (default 900). |
-| `--auth-note TEXT` | Your ticket or scope reference. At least 5 characters. |
-| `--yes` | Skip the interactive authorization prompt. |
-| `--no-interactive` | Do not prompt after the scan. |
+| `--mode quick` | Faster profile with less fuzzing |
+| `--threads 16` | More parallel tool workers (1–32) |
+| `--timeout 1800` | Longer per-tool timeout |
+| `--auth-note "AC-2026-0142"` | Supply the authorization note non-interactively |
+| `--yes` | Skip the `YES` prompt (the note is still required) |
+| `--no-interactive` | Do not ask what to do after the scan |
 
-### The authorization prompt
-
-Without `--yes`, TRISHUL asks you to confirm:
-
-```
-Type 'yes' to confirm you are authorized to test this target:
-```
-
-Answering anything else aborts the scan. This is deliberate friction.
-
-### Where the output goes
-
-```
-reports/<scan-id>/
-├── report.json      the complete machine-readable record
-├── report.md        a readable summary
-├── report.html      a standalone HTML document
-├── bug_bounty.md    a submission-ready write-up
-└── raw/             the raw tool output, for audit
-```
-
-The CLI prints the paths when the scan finishes.
-
----
-
-## 5. Use the dashboard
+### From the API
 
 ```bash
-source .venv/bin/activate
-uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<password>"}' \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -s -X POST http://127.0.0.1:8000/api/scans \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{
+        "target": "example.com",
+        "mode": "deep",
+        "authorized": true,
+        "authorization_note": "AC-2026-0142",
+        "thread_limit": 8,
+        "timeout_seconds": 900
+      }'
 ```
 
-Open <http://127.0.0.1:8000> and sign in with the admin credentials.
-
-| Panel | What it does |
-|---|---|
-| **Scan** | Set the target, choose the mode, confirm authorization, start. |
-| **Progress** | Live stage, percentage, elapsed time, and a cancel button. |
-| **Logs** | The event stream over a WebSocket. |
-| **Findings** | Sort by severity or confidence; open one for its evidence and AI reasoning. |
-| **Chat** | Ask the AI about the scan. It has the current findings in context. |
-| **Provider** | Switch provider, change model, test the connection. |
-| **Integrations** | Define your own enrichment APIs and call them. |
-| **Reports** | Open or download any report for any scan. |
-
-### Reading a finding
-
-Every finding shows:
-
-- **Severity** — Informational, Low, Medium, High or Critical.
-- **Confidence** — 0–100, the evidence-based score.
-- **Baseline** — the deterministic score before any AI override, shown
-  separately so an override is visible.
-- **Verified** — whether the evidence reproduced on the live asset.
-- **Evidence** — the raw items each check produced.
-- **AI analysis** — the model's reasoning and remediation, when a model was
-  available.
-
-A finding marked **AI adjusted** was re-scored by the model. The baseline is
-kept so you can judge whether the override was sensible.
+Both `authorized: true` and an `authorization_note` of at least 5 characters are
+required; otherwise the request is rejected with `400` or `422`.
 
 ---
 
-## 6. The interactive PoC guide
+## 5. Read the findings
 
-TRISHUL never sends a destructive request and never automates an exploit.
-Instead, for each finding it produces a **guide**: a sequence of manual steps
-you work through yourself.
+### In the terminal
 
-1. Open the finding.
-2. Start the guide.
-3. Work through the steps one at a time.
-4. Press **Next** when you have completed a step, **Hint** when you want a
-   nudge, or **Skip**.
-5. The guide records your progress and your notes.
+The CLI prints every finding after the scan:
 
-The guide also carries a screenshot guide and a video script, so you can
-record clean evidence for a report.
+```
+[High] Exposed admin panel at /admin
+  Asset      : https://example.com/admin
+  Confidence : 87 (evidence baseline 72) | verified: true
+  AI         : adjudicated this finding
+  Administrative interface exposed on the public interface.
+  Request    : GET /admin HTTP/1.1
+  Impact     : Attackers can attempt administrative login attempts.
+  Fix        : Restrict the interface to an allowlist or VPN.
+```
 
-The PoC bundle itself contains the reproduction steps, a read-only request
-example, the expected response, the impact, the remediation and the bounty
-write-up.
+Read the two confidence numbers carefully:
 
----
+- **`baseline_confidence`** is the deterministic evidence score computed from the raw
+  tool output.
+- **`confidence`** is the effective score. When an AI adjudicated the finding, it is the
+  AI's score and `ai_adjusted` is `true`. When no model was reachable, the deterministic
+  score stands.
 
-## 7. Reports
+`verified: true` means the finding was confirmed during the verify stage.
 
-Four formats, from one scan record:
-
-| File | Use |
-|---|---|
-| `report.json` | Feeding another tool, or diffing two scans. |
-| `report.md` | Pasting into a ticket or a chat. |
-| `report.html` | Sending to a client. Self-contained, no external assets. |
-| `bug_bounty.md` | Submitting to a bug bounty program. |
-
-The bug-bounty write-up is generated from the finding's PoC bundle: title,
-severity, asset, reproduction steps, request/response, impact and remediation.
-It is written for a reader who has not seen the scan.
-
----
-
-## 8. External integrations
-
-Integrations are **your** APIs, used to enrich findings. They are separate
-from the AI provider, and entirely optional.
-
-In the dashboard, **Integrations → Add** takes:
-
-| Field | Meaning |
-|---|---|
-| Name | A unique identifier. |
-| Base URL | The server, e.g. `https://api.example.com`. |
-| Path | The path, e.g. `/v1/ip-reputation`. |
-| Method | `GET`, `POST`, … |
-| Auth | `none`, `bearer`, `header` or `query`. |
-| Auth name | The header or query parameter name. |
-| API key | Stored encrypted, never returned. |
-| Headers / Parameters | Extra static values. |
-| Response JSON path | Where in the response the useful value is, e.g. `data.result`. |
-| Rate limit | Calls per minute. |
-| Cache TTL | Seconds to cache a response. |
-
-Invoke one with:
+### Through the API
 
 ```bash
-curl -X POST http://localhost:8000/api/integrations/my-api/invoke \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"params": {"ip": "93.184.216.34"}}'
+curl -s http://127.0.0.1:8000/api/scans -H "Authorization: Bearer $TOKEN"          # all scans
+curl -s http://127.0.0.1:8000/api/scans/<scan_id> -H "Authorization: Bearer $TOKEN" # one scan
+curl -s http://127.0.0.1:8000/api/scans/<scan_id>/findings -H "Authorization: Bearer $TOKEN"
 ```
 
-```json
-{ "ok": true, "data": { ... }, "cached": false, "latency_ms": 142 }
-```
+A finding carries its evidence, its references, the optional PoC bundle, the guide steps
+and the AI analysis.
+
+### In the dashboard
+
+Open the dashboard (see step 8) and pick a scan. The findings table shows severity,
+confidence, verified state and the source tool; selecting a finding opens the evidence
+and the AI analysis.
 
 ---
 
-## 9. Configuration
+## 6. Use the guide engine
 
-`config/default.yaml` holds the defaults. Every value has an environment
-override.
+The guide engine turns a finding into a short, **non-destructive** manual reproduction
+walkthrough. TRISHUL never exploits a finding for you — you run the steps.
 
-```yaml
-app:
-  host: 127.0.0.1
-  port: 8000
+### From the CLI
 
-scan:
-  default_mode: deep
-  thread_limit: 8
-  max_concurrent_scans: 3
-  ffuf_max_requests: 2000
+After a scan you are asked what to do next:
 
-security:
-  allow_private_targets: false
-  authorized_targets: []
-  rate_limit_requests: 120
-
-ai:
-  edition: local
-  provider: ollama
-  model: llama3.1:8b
+```
+What would you like to do?
+1. Guide me step-by-step (manual PoC)
+2. Show report paths only
+3. Skip
 ```
 
-### Environment variables
+Choose `1`, then select the finding to work through:
 
-| Variable | Effect |
-|---|---|
-| `TRISHUL_ADMIN_USER` / `TRISHUL_ADMIN_PASSWORD` | The dashboard login. |
-| `TRISHUL_API_HOST` / `TRISHUL_API_PORT` | Where the server binds. |
-| `TRISHUL_ALLOW_PRIVATE_TARGETS` | Permit internal targets. Read the warning in [SECURITY.md](SECURITY.md) first. |
-| `TRISHUL_EDITION` / `TRISHUL_AI_PROVIDER` / `TRISHUL_AI_MODEL` | The AI configuration. |
-| `TRISHUL_MASTER_KEY` | The credential-encryption master key. |
-| `TRISHUL_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+```
+Step 2/5
+  Open the URL in a browser and observe the response headers.
 
-### Scanning an internal target
-
-```yaml
-security:
-  allow_private_targets: true
-  authorized_targets:
-    - staging.internal.example
-    - 10.20.0.0/16
+Action [next/done/hint/retry]: hint
+Hint: Compare the headers with a request to an unauthenticated path.
 ```
 
-Keep the allowlist tight when you enable private targets.
+- `next` — advance to the next step
+- `done` — mark the current step as finished
+- `hint` — show a hint for the current step
+- `retry` — repeat the current step
+
+### Through the API
+
+```bash
+# Start a guide for one finding
+curl -s -X POST "http://127.0.0.1:8000/api/guides/start?scan_id=<scan_id>" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"finding_id": "<finding_id>"}'
+
+# Advance it
+curl -s -X POST http://127.0.0.1:8000/api/guides/<guide_id>/action \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action": "next"}'
+```
+
+The action is one of `next`, `done`, `hint`, `retry`. The session stores its history, so
+you can leave and come back.
 
 ---
 
-## 10. Updating
+## 7. Generate reports
+
+Reports are written at the end of every scan under `reports/<scan_id>/` in four formats:
+JSON, Markdown, HTML and a bug-bounty-style document.
+
+```bash
+# From the CLI, the paths are printed at the end of the scan
+trishul example.com --mode deep
+
+# From the API
+curl -s -o report.json      http://127.0.0.1:8000/api/reports/<scan_id>/json      -H "Authorization: Bearer $TOKEN"
+curl -s -o report.md        http://127.0.0.1:8000/api/reports/<scan_id>/markdown  -H "Authorization: Bearer $TOKEN"
+curl -s -o report.html      http://127.0.0.1:8000/api/reports/<scan_id>/html      -H "Authorization: Bearer $TOKEN"
+curl -s -o bounty.md        http://127.0.0.1:8000/api/reports/<scan_id>/bug_bounty -H "Authorization: Bearer $TOKEN"
+```
+
+Each report contains the findings with their severity, confidence and evidence, the
+reproduction steps, the impact and the remediation, and the raw artifact references.
+
+The raw tool output sits next to the reports in the same scan directory, so every
+finding can be traced back to the bytes that produced it.
+
+---
+
+## 8. Run the dashboard
+
+### Development
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173
+```
+
+The dashboard talks to `http://localhost:8000` by default; set `VITE_API_BASE` to point
+it elsewhere. Log in with the credentials from `data/admin-credentials.txt`.
+
+### Production
+
+```bash
+cd frontend
+npm install
+npm run build      # writes frontend/dist
+```
+
+The backend serves the built bundle automatically on `http://127.0.0.1:8000`, so no
+second process is needed.
+
+In the dashboard you can:
+
+- start a scan and watch it progress live over the WebSocket;
+- browse findings, evidence and AI analysis;
+- run the guide engine step by step;
+- download the four report formats;
+- switch the AI provider and model, and test the connection;
+- configure optional enrichment integrations.
+
+---
+
+## 9. Optional: enrichment integrations
+
+External enrichment is **optional** and entirely user-configured. Nothing is fetched
+unless you create an integration yourself.
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/integrations \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{
+        "name": "my-lookup",
+        "base_url": "https://api.example.com",
+        "path": "/v1/lookup",
+        "method": "GET",
+        "auth_type": "bearer",
+        "auth_name": "Authorization",
+        "api_key": "...",
+        "params": {"q": "{{asset}}"},
+        "response_json_path": "data",
+        "rate_limit_per_minute": 30,
+        "cache_ttl_seconds": 3600
+      }'
+```
+
+Test it with `POST /api/integrations/<name>/test`, invoke it with
+`POST /api/integrations/<name>/invoke`, and remove it with
+`DELETE /api/integrations/<name>`. Integration keys are encrypted at rest, and the
+endpoint is subject to the same SSRF protection as everything else.
+
+---
+
+## 10. Keep TRISHUL up to date
 
 ```bash
 ./update.sh
 ```
 
-The script works in a backup-first order: it backs up the current config and
-database, upgrades the Python dependencies, refreshes the nuclei templates,
-re-applies any database migrations and re-verifies the install. It prints a
-diff of your configuration changes.
+The updater backs up `config/` first (never `data/`, so no secret is copied), upgrades
+the Python dependencies, refreshes the nuclei templates, rebuilds the dashboard, runs the
+migrations and finishes with a health check. If any step fails it stops and prints the
+rollback command.
 
-To update just the templates and wordlists:
+```bash
+./update.sh --tools          # also rebuild httpx, nuclei and ffuf (off by default)
+./update.sh --no-frontend    # skip the dashboard rebuild
+```
+
+The nuclei templates and local wordlists can also be refreshed from the CLI:
 
 ```bash
 trishul --update
 ```
 
-TRISHUL never downloads wordlists. To use a larger corpus, put it in
-`config/wordlists/extra/common/` or `config/wordlists/extra/params/` and run
-`trishul --update` again.
-
 ---
 
-## 11. Troubleshooting
+## 11. When something goes wrong
 
-**`Missing required tools: nmap`** — the scanner is not installed. Run
-`trishul --autofix` and follow the printed command.
+| Symptom | What to do |
+|---|---|
+| `trishul: command not found` | `export PATH="$HOME/.local/bin:$PATH"` |
+| A tool is reported missing | `trishul --health` prints the exact fix command for each tool |
+| The AI is unreachable | `trishul --provider` to check the base URL and model, then `trishul --health` |
+| The scan is rejected before starting | The target is out of scope or resolves to a private address — expected behaviour |
+| The dashboard cannot log in | Read `data/admin-credentials.txt`, or set `TRISHUL_ADMIN_USER` / `TRISHUL_ADMIN_PASSWORD` |
+| Reports are empty | The scan produced no findings; check the per-stage log on the scan record |
 
-**`Target is not authorized`** — the target is outside
-`security.authorized_targets`, or it resolves to a private address. Either
-add it to the allowlist or set `allow_private_targets`.
-
-**`AI is not reachable`** — the model server is down or the key is missing.
-`trishul --health` shows which. The scan still completes with deterministic
-scores.
-
-**`Address already in use` on port 8000** — another process holds the port.
-Use `TRISHUL_API_PORT=8010`.
-
-**The dashboard shows "Failed to fetch"** — the frontend is pointed at the
-wrong API. Set `VITE_API_BASE` and rebuild, or check that the backend is
-running on the expected address.
-
-**A scan produced no findings** — that is a real result, not a bug. Check
-`reports/<scan-id>/raw/` to see what each tool actually returned. If a tool
-errored, its output is recorded there.
-
----
-
-## 12. Getting help
-
-- `docs/ARCHITECTURE.md` — how the system is built.
-- `docs/SECURITY.md` — the security model and the authorization policy.
-- `docs/EDITIONS.md` — LOCAL versus PROVIDER.
-- `docs/PROVIDERS.md` — every AI backend and how to configure it.
-- `docs/API-CONTRACT.md` — every REST endpoint and WebSocket event.
+More detail: [SECURITY.md](SECURITY.md) for the policy model, [EDITIONS.md](EDITIONS.md)
+for choosing an edition, [PROVIDERS.md](PROVIDERS.md) for AI configuration and
+[ARCHITECTURE.md](ARCHITECTURE.md) for how the pipeline works.

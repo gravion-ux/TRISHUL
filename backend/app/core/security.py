@@ -206,12 +206,16 @@ def ensure_admin_credentials(
 
 
 def api_key_hint(value: str | None) -> str:
-    """Return a non-reversible hint for an API key such as ``sk-…abcd``."""
+    """Return a non-reversible hint for an API key such as ``sk-...abcd``.
+
+    The hint is pure ASCII so it can be printed to a legacy console, piped
+    into a log file or embedded in a JSON response without any re-encoding.
+    """
     if not value:
         return ""
     if len(value) <= 10:
         return "*" * len(value)
-    return f"{value[:5]}…{value[-4:]}"
+    return f"{value[:5]}...{value[-4:]}"
 
 
 def utcnow_epoch() -> int:

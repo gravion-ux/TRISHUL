@@ -377,6 +377,17 @@ health_check() {
     fi
   fi
 
+  # The application's own health report is the authoritative check: it knows
+  # about the tool versions, the edition and the AI reachability.
+  if [[ -x "${VENV_DIR}/bin/python" && -f "${ROOT_DIR}/cli/trishul.py" ]]; then
+    log "Running the TRISHUL self-check (trishul --health)..."
+    if "${VENV_DIR}/bin/python" "${ROOT_DIR}/cli/trishul.py" --health; then
+      ready+=("trishul --health reports the installation as ready")
+    else
+      warn "trishul --health reports that the installation is not ready — see the report above."
+    fi
+  fi
+
   printf '\n'
   printf 'TRISHUL installation summary\n'
   printf -- '----------------------------\n'

@@ -28,6 +28,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.app.core.config import get_settings  # noqa: E402
+from backend.app.core.console import protect_streams, safe_write  # noqa: E402
 from backend.app.core.events import event_bus  # noqa: E402
 from backend.app.core.utils import redact  # noqa: E402
 from backend.app.main import (  # noqa: E402
@@ -39,24 +40,35 @@ from backend.app.main import (  # noqa: E402
 )
 from backend.app.models import GuideAction, ScanMode, ScanRequest  # noqa: E402
 
+# The banner is pure ASCII on purpose.  TRISHUL has to render identically on
+# a UTF-8 terminal, on a legacy Windows code page (cp437 / cp1252) and when
+# the output is piped into a log file, so it may not depend on any glyph
+# outside the 7-bit range.
 BANNER = "\n".join(
     [
         "",
-        "███████████  ███████ ███    ██  ███████ ██   ██ ██    ██ ███████ ",
-        "██    ██ ██      ███    ██ ██       ███    ██ ██   ██ ██    ██ ",
-        "███████████     ███    █████       ███    ██ ██   ██ ██    ██ ",
-        "██    ██ ██      ███    ██ ██       ███    ██  ██  ██  ██    ██ ",
-        "██    ██  ███████ ███    ██  ███████ ███    ██   ██   ███████ ",
+        "######## ########  ####  ######  ##     ## ##     ## ##",
+        "   ##    ##     ##  ##  ##    ## ##     ## ##     ## ##",
+        "   ##    ##     ##  ##  ##       ##     ## ##     ## ##",
+        "   ##    ########   ##   ######  ######### ##     ## ##",
+        "   ##    ##   ##    ##        ## ##     ## ##     ## ##",
+        "   ##    ##    ##   ##  ##    ## ##     ## ##     ## ##",
+        "   ##    ##     ## ####  ######  ##     ##  #######  ########",
         "",
-        "  Authorized security testing platform — Local and Provider editions",
+        "  Authorized security testing platform - Local and Provider editions",
         "",
     ]
 )
 
 SAFETY_NOTICE = (
-    "  ⚠  AUTHORIZED SECURITY TESTING ONLY\n"
+    "  [!]  AUTHORIZED SECURITY TESTING ONLY\n"
     '  "Hey kid, don\'t ride a horse that isn\'t yours"\n'
 )
+
+
+def print_banner() -> None:
+    """Print the banner without ever raising an encoding error."""
+    safe_write(BANNER)
 
 
 def render_progress(percent: int, width: int = 30) -> str:
@@ -89,8 +101,8 @@ async def stream_events(scan_id: str) -> None:
 
 async def run_scan(args: argparse.Namespace) -> int:
     """Run a scan from the command line."""
-    print(BANNER)
-    print(SAFETY_NOTICE)
+    print_banner()
+    safe_write(SAFETY_NOTICE)
 
     health = await health_service.get_health_async()
     missing = [tool for tool in health.tools if tool.required and not tool.installed]
@@ -248,7 +260,7 @@ def print_findings(scan) -> None:
 
 def run_health() -> int:
     """Print the health report."""
-    print(BANNER)
+    print_banner()
     health = asyncio.run(health_service.get_health_async())
     print(f"  Version    : {health.version}")
     print(f"  Edition    : {health.edition.value}")
@@ -257,9 +269,9 @@ def run_health() -> int:
     print()
     print("  Tools:")
     for tool in health.tools:
-        marker = "✓" if tool.installed else "✗"
+        marker = "[ok]" if tool.installed else "[!!]"
         required = " (required)" if tool.required else ""
-        version = f" — {tool.version}" if tool.version else ""
+        version = f" - {tool.version}" if tool.version else ""
         print(f"    {marker} {tool.name}{required}{version}")
     print()
     print(f"  AI         : {health.ai.provider} / {health.ai.model}")
@@ -297,7 +309,7 @@ def run_provider(args: argparse.Namespace) -> int:
         return 0
 
     config = ai_manager.current_config()
-    print(BANNER)
+    print_banner()
     print(f"  Edition    : {config.edition.value}")
     print(f"  Provider   : {config.provider.value}")
     print(f"  Model      : {config.model}")
@@ -308,13 +320,13 @@ def run_provider(args: argparse.Namespace) -> int:
     for descriptor in ai_manager.catalog():
         print(
             f"    {descriptor.kind.value:<18} {descriptor.edition.value:<9} "
-            f"{descriptor.default_base_url}  — {descriptor.notes}"
+            f"{descriptor.default_base_url}  - {descriptor.notes}"
         )
     return 0
 
 
 def run_autofix() -> int:
-    """Show — and optionally run — the commands that install missing tools.
+    """Show - and optionally run - the commands that install missing tools.
 
     Commands are executed without a shell: the command string is split with
     ``shlex.split`` and passed to ``subprocess.run`` as an argv list.
@@ -323,7 +335,7 @@ def run_autofix() -> int:
     if not commands:
         print("No missing tools detected. Nothing to do.")
         return 0
-    print(BANNER)
+    print_banner()
     print("Autofix commands:")
     for command in commands:
         print(f"  $ {command}")
@@ -357,7 +369,7 @@ def run_update() -> int:
     """Refresh nuclei templates and the optional wordlist repository."""
     from backend.app.main import updater_service
 
-    print(BANNER)
+    print_banner()
     print("Updating nuclei templates and payload lists...")
     details = asyncio.run(updater_service.update_all())
     print(json.dumps(redact(details), indent=2))
@@ -372,7 +384,7 @@ def run_update() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trishul",
-        description="TRISHUL — authorized-scope AI-powered security testing platform.",
+        description="TRISHUL - authorized-scope AI-powered security testing platform.",
     )
     parser.add_argument("target", nargs="?", help="Target host or URL to assess.")
     parser.add_argument("--mode", default="deep", choices=["quick", "deep"], help="Scan depth.")
@@ -401,6 +413,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # Make stdout and stderr tolerant of characters the host code page cannot
+    # represent.  Without this, a legacy Windows console turns any non-ASCII
+    # character -- including text produced by an AI provider -- into a
+    # UnicodeEncodeError that kills the CLI mid-run.
+    protect_streams()
+
     parser = build_parser()
     args = parser.parse_args()
 

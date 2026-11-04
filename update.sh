@@ -56,7 +56,24 @@ EOF
 log() { printf '[*] %s\n' "$*"; }
 ok() { printf '[ok] %s\n' "$*"; }
 warn() { printf '[!!] %s\n' "$*" >&2; }
-die() { printf '[xx] %s\n' "$*" >&2; exit 1; }
+
+# rollback_note explains how to get back to the pre-update state. It is printed
+# for every failure, because an interrupted update must always leave the user
+# with a documented way back.
+rollback_note() {
+  printf '\n'
+  warn "The update did not complete."
+  warn "Rollback: restore the configuration backup with:"
+  warn "  cp -a '${BACKUP_DIR}/config' '${ROOT_DIR}/config'"
+  warn "Python dependencies were not downgraded automatically; re-run './install.sh' to rebuild .venv."
+  warn "Scan data in data/ was not modified by this script."
+}
+
+die() {
+  printf '[xx] %s\n' "$*" >&2
+  rollback_note
+  exit 1
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,12 +100,8 @@ done
 on_error() {
   local exit_code=$?
   local line="$1"
-  printf '\n'
-  warn "The update failed with exit code ${exit_code} (line ${line})."
-  warn "Rollback: restore the configuration backup with:"
-  warn "  cp -a '${BACKUP_DIR}/config' '${ROOT_DIR}/config'"
-  warn "Python dependencies were not downgraded automatically; re-run './install.sh' to rebuild .venv."
-  warn "Scan data in data/ was not modified by this script."
+  rollback_note
+  warn "Failed with exit code ${exit_code} (line ${line})."
   exit "${exit_code}"
 }
 trap 'on_error ${LINENO}' ERR
@@ -247,6 +260,17 @@ health_check() {
       ready+=("API is answering on http://127.0.0.1:8000/api/health")
     else
       log "The API is not running yet. Start it with: python -m backend.app.main"
+    fi
+  fi
+
+  # The application's own health report is the authoritative check: it knows
+  # about the tool versions, the edition and the AI reachability.
+  if [[ -x "${VENV_DIR}/bin/python" && -f "${ROOT_DIR}/cli/trishul.py" ]]; then
+    log "Running the TRISHUL self-check (trishul --health)..."
+    if "${VENV_DIR}/bin/python" "${ROOT_DIR}/cli/trishul.py" --health; then
+      ready+=("trishul --health reports the installation as ready")
+    else
+      warn "trishul --health reports that the installation is not ready — see the report above."
     fi
   fi
 

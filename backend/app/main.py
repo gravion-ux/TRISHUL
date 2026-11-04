@@ -129,18 +129,37 @@ token_manager = TokenManager(settings.data_dir / ".api_secret", settings.auth.to
 ADMIN_USER, ADMIN_PASSWORD, ADMIN_GENERATED = ensure_admin_credentials(
     settings.auth.username, settings.auth.password or None, settings.data_dir
 )
-if settings.auth.password:
-    # An explicitly configured password always wins, so rotating
-    # TRISHUL_ADMIN_PASSWORD takes effect on the next start instead of being
-    # shadowed by the hash stored on the first run.
-    credentials.set("admin:password_hash", hash_password(settings.auth.password))
-elif not credentials.get("admin:password_hash"):
-    # A generated password is written once and then kept.
-    credentials.set("admin:password_hash", hash_password(ADMIN_PASSWORD))
+
+
+def _apply_admin_password() -> None:
+    """Store the administrator password hash in the credential store.
+
+    This runs when the application *starts serving* -- never when the module
+    is merely imported.  Importing the app must not mutate the credential
+    store: the test suite imports it with ``TRISHUL_ADMIN_PASSWORD`` set, and
+    doing the write at import time silently replaced the operator's password
+    in a live installation, leaving the dashboard unreachable.
+
+    The password of record is, in order of precedence:
+
+    1. ``TRISHUL_ADMIN_PASSWORD`` (or ``auth.password`` in the config), so
+       rotating it takes effect on the next start;
+    2. the password in ``data/admin-credentials.txt``;
+    3. the password generated on the first run.
+    """
+    password = settings.auth.password or ADMIN_PASSWORD
+    if not password:
+        return
+    stored = credentials.get("admin:password_hash") or ""
+    if stored and verify_password(password, stored):
+        # Already correct: do not rewrite the encrypted store on every boot.
+        return
+    credentials.set("admin:password_hash", hash_password(password))
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    _apply_admin_password()
     storage.purge_expired_cache()
     try:
         yield
@@ -509,11 +528,11 @@ def _fallback_chat_reply(request: ChatRequest, scan_context: str, error: Excepti
             f"The AI provider is not reachable ({reason}), so this answer was generated "
             "without a model from the scan record only.\n\n"
             f"{scan_context}\n\n"
-            "Configure a provider in Settings → AI Provider to get a model-backed analysis."
+            "Configure a provider in Settings -> AI Provider to get a model-backed analysis."
         )
     return (
         f"The AI provider is not reachable ({reason}), so this answer was generated "
-        "without a model. Configure a provider in Settings → AI Provider, then retry."
+        "without a model. Configure a provider in Settings -> AI Provider, then retry."
     )
 
 

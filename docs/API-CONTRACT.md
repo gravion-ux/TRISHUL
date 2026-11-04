@@ -185,7 +185,7 @@ interface ProviderConfig {
   base_url: string;
   timeout_seconds: number;
   has_api_key: boolean;
-  api_key_hint: string;   // e.g. "sk-…abcd" — never the full key
+  api_key_hint: string;   // e.g. "sk-...abcd" — never the full key
   updated_at: string | null;
 }
 

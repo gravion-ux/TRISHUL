@@ -2,6 +2,17 @@
 
 The administrator password is pinned *before* the application is imported so
 that the API tests can authenticate deterministically.
+
+The pin is unconditional on purpose.  With ``setdefault`` an ambient
+``TRISHUL_ADMIN_PASSWORD`` in the operator's shell would leak into the test
+session and desynchronise the test credentials from the pinned ones.
+
+The AI provider environment variables are *removed* rather than pinned to a
+fixed provider.  Each release archive ships its own ``config/default.yaml``
+-- the LOCAL archive selects Ollama, the PROVIDER archive selects OpenAI --
+and the test suite has to exercise the edition it was shipped with instead of
+hard-coding one provider.  Pinning a provider here used to make the PROVIDER
+archive's own test suite fail.
 """
 
 from __future__ import annotations
@@ -16,8 +27,21 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-os.environ.setdefault("TRISHUL_ADMIN_PASSWORD", "trishul-test-password")
-os.environ.setdefault("TRISHUL_AI_PROVIDER", "ollama")
+TEST_PASSWORD = "trishul-test-password"
+
+os.environ["TRISHUL_ADMIN_PASSWORD"] = TEST_PASSWORD
+
+# An ambient provider selection would silently override the configuration file
+# the archive ships, so the test session always starts from the shipped file.
+for _variable in (
+    "TRISHUL_EDITION",
+    "TRISHUL_AI_PROVIDER",
+    "TRISHUL_AI_MODEL",
+    "TRISHUL_AI_BASE_URL",
+    "TRISHUL_AI_TIMEOUT",
+):
+    os.environ.pop(_variable, None)
+os.environ["TRISHUL_CONFIG"] = str(ROOT_DIR / "config" / "default.yaml")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -41,8 +65,6 @@ from backend.app.services.tool_adapters import (  # noqa: E402
 )
 from backend.app.services.tool_runner import ToolRunner  # noqa: E402
 from backend.app.services.tooling import ToolRegistry  # noqa: E402
-
-TEST_PASSWORD = "trishul-test-password"
 
 
 @pytest.fixture()

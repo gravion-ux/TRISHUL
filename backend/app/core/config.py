@@ -20,6 +20,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from backend.app.core.provider_catalog import LOCAL_PROVIDERS, endpoint_defaults
+from backend.app.models import ProviderKind
+
 # backend/app/core/config.py -> parents[3] is the project root.
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
@@ -80,12 +83,17 @@ class AIConfig(BaseModel):
 
     ``edition`` drives the defaults only. The security engine never branches
     on it — it always talks to the provider abstraction.
+
+    ``base_url`` and ``model`` are empty by default: an empty value means
+    "use the catalogue default for the selected provider". A hard-coded
+    default here would silently point a different provider at the wrong
+    endpoint.
     """
 
     edition: str = "local"
     provider: str = "ollama"
-    model: str = "llama3.1:8b"
-    base_url: str = "http://localhost:11434"
+    model: str = ""
+    base_url: str = ""
     timeout_seconds: int = 120
     max_tokens: int = 2048
     temperature: float = 0.2
@@ -217,17 +225,46 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     return settings
 
 
-def _apply_edition_defaults(settings: Settings) -> Settings:
-    """Fill in edition-appropriate provider defaults.
+def _apply_provider_selection(settings: Settings, yaml_provider: str) -> Settings:
+    """Keep the selected provider, its endpoint and its model consistent.
 
-    Only *defaults* are touched. Once a user has saved a provider
-    configuration it is persisted separately and always wins over these.
+    Switching the provider has to move the endpoint and the model with it.
+    Otherwise a provider switch silently keeps sending the previous
+    provider's protocol to the previous provider's URL -- for example
+    ``TRISHUL_AI_PROVIDER=anthropic`` would talk to Ollama's port with
+    Anthropic's request format.
+
+    Rules:
+
+    * An explicit ``TRISHUL_AI_PROVIDER`` always wins. The module documents
+      environment variables as the highest-precedence configuration layer, so
+      the edition default must never silently rewrite an operator's choice.
+    * The PROVIDER edition prefers a hosted provider over a local one, but
+      only when the provider was not chosen explicitly.
+    * An explicit ``TRISHUL_AI_BASE_URL`` / ``TRISHUL_AI_MODEL`` always wins.
+    * When the provider does *not* change, the configured endpoint and model
+      are left untouched so a customised configuration file keeps working.
     """
-    if settings.ai.edition == "provider":
-        if settings.ai.provider in {"ollama", "lmstudio", "llamacpp"}:
-            settings.ai.provider = "openai"
-            settings.ai.base_url = "https://api.openai.com/v1"
-            settings.ai.model = "gpt-4o-mini"
+    env_provider = os.environ.get("TRISHUL_AI_PROVIDER")
+    explicit_provider = env_provider.strip().lower() if env_provider else None
+    explicit_base_url = bool(os.environ.get("TRISHUL_AI_BASE_URL"))
+    explicit_model = bool(os.environ.get("TRISHUL_AI_MODEL"))
+
+    provider = settings.ai.provider
+    if explicit_provider:
+        provider = explicit_provider
+    elif settings.ai.edition == "provider" and provider in LOCAL_PROVIDERS:
+        provider = ProviderKind.OPENAI.value
+
+    settings.ai.provider = provider
+
+    if provider != yaml_provider:
+        defaults = endpoint_defaults(provider)
+        if defaults is not None:
+            if not explicit_base_url:
+                settings.ai.base_url = defaults[0]
+            if not explicit_model:
+                settings.ai.model = defaults[1]
     return settings
 
 
@@ -240,9 +277,14 @@ def get_settings() -> Settings:
     """
     config_path = Path(os.environ.get("TRISHUL_CONFIG", ROOT_DIR / "config" / "default.yaml"))
     raw = _read_yaml(config_path)
+    # The provider the configuration file itself selects. It is captured
+    # before the environment overrides so that a provider switch can be told
+    # apart from a configuration file that simply names the same provider.
+    raw_ai = raw.get("ai") if isinstance(raw.get("ai"), dict) else {}
+    yaml_provider = str(raw_ai.get("provider") or AIConfig().provider)
     settings = Settings(**raw)
     settings = _apply_env_overrides(settings)
-    settings = _apply_edition_defaults(settings)
+    settings = _apply_provider_selection(settings, yaml_provider)
 
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
     settings.reports_dir.mkdir(parents=True, exist_ok=True)

@@ -59,7 +59,7 @@ export default function Sidebar({
         <p className="tagline">Authorized security testing only.</p>
         <div className="brand-badges">
           <span className="badge badge-edition">{edition ? edition.toUpperCase() : "—"}</span>
-          <span className="badge badge-quiet">v{health?.version ?? "—"}</span>
+          {health?.version ? <span className="badge badge-quiet">v{health.version}</span> : null}
         </div>
       </div>
 
