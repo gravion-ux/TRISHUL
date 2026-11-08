@@ -286,10 +286,33 @@ interface ScanRequest {
   mode: ScanMode;
   authorized: boolean;          // must be true, else HTTP 400
   authorization_note: string;   // min length 5, else HTTP 422
-  thread_limit: number;         // 1..32
-  timeout_seconds: number;      // 30..7200
+  thread_limit?: number;        // 1..32; omitted = scan.thread_limit from the config
+  timeout_seconds?: number;     // 30..7200; omitted = scan.timeout_seconds from the config
 }
 ```
+
+`thread_limit` and `timeout_seconds` are optional. When they are omitted the configured
+defaults are used; either way the resolved values are stored on the scan record
+(`ScanRecord.thread_limit`, `ScanRecord.timeout_seconds`) and are the values the tools
+run with.
+
+```ts
+interface ScanRecord {
+  // ...
+  thread_limit?: number | null;    // the limit this scan resolved to
+  timeout_seconds?: number | null; // the timeout this scan resolved to
+}
+```
+
+## Errors
+
+| Status | When |
+|---|---|
+| `400` | A malformed request, or an endpoint that fails URL validation (`POST /api/providers/config`, `POST /api/integrations`) |
+| `401` | Invalid or expired access token, or invalid administrator credentials |
+| `422` | A field outside its allowed range (for example `thread_limit` outside 1..32) |
+| `429` | The rate limit was exhausted. `POST /api/auth/token` has its own budget — `security.login_rate_limit_attempts` attempts per source address — and answers with a `Retry-After` header |
+| `502` | An upstream provider or integration could not be reached |
 
 ## WebSocket `/ws/scans/{scan_id}`
 

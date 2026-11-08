@@ -98,6 +98,10 @@ export interface ScanRecord {
   error: string | null;
   ai_provider: string;
   ai_model: string;
+  /** The concurrency limit this scan resolved to. */
+  thread_limit?: number | null;
+  /** The per-invocation timeout this scan resolved to, in seconds. */
+  timeout_seconds?: number | null;
 }
 
 export interface GuideSession {
@@ -215,8 +219,10 @@ export interface ScanRequest {
   mode: ScanMode;
   authorized: boolean;
   authorization_note: string;
-  thread_limit: number;
-  timeout_seconds: number;
+  /** 1..32. Omitted to use the configured default. */
+  thread_limit?: number;
+  /** 30..7200 seconds. Omitted to use the configured default. */
+  timeout_seconds?: number;
 }
 
 export interface StartScanResponse {

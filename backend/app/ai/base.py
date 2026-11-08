@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.app.core.url_guard import UrlGuard
 from backend.app.models import ProviderKind
 
 
@@ -65,6 +66,13 @@ class AIProvider(abc.ABC):
         timeout: int = 120,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/")
+        # The endpoint is operator-configured, so it is validated before a
+        # single byte leaves the machine. A base URL that points at the cloud
+        # metadata service, carries credentials in its userinfo part or uses
+        # a scheme other than http(s) is refused outright.
+        self.guard = UrlGuard()
+        if self.base_url:
+            self.guard.check(self.base_url)
         self.model = model
         self.api_key = api_key
         self.timeout = timeout

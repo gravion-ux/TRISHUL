@@ -21,7 +21,7 @@ from backend.app.core.events import event_bus
 from backend.app.core.scope import ScopePolicy
 from backend.app.core.storage import Storage
 from backend.app.core.utils import redact, utcnow
-from backend.app.models import Finding, ScanRecord
+from backend.app.models import Finding, ScanLimits, ScanRecord
 from backend.app.services.integrations import IntegrationManager
 from backend.app.services.tool_adapters import (
     FfufAdapter,
@@ -63,6 +63,18 @@ class AgentContext:
     def __post_init__(self) -> None:
         if self.ai_errors is None:
             self.ai_errors = []
+
+    @property
+    def limits(self) -> ScanLimits:
+        """The execution limits this scan runs with.
+
+        The scan record carries the limits the operator asked for; the
+        configured defaults are the fallback when it carries none.
+        """
+        return ScanLimits(
+            thread_limit=self.scan.thread_limit or self.settings.scan.thread_limit,
+            timeout_seconds=self.scan.timeout_seconds or self.settings.scan.timeout_seconds,
+        )
 
 
 class BaseAgent:
@@ -185,19 +197,25 @@ class BaseAgent:
 
     @staticmethod
     def finding_summary(finding: Finding, limit: int = 1200) -> str:
-        """Render a finding for inclusion in an AI prompt."""
+        """Render a finding for inclusion in an AI prompt.
+
+        The raw tool output is attacker-influenced and may carry a captured
+        credential, so it is redacted before it reaches the model.
+        """
         evidence_lines = [f"- {item.source}: {item.summary}" for item in finding.evidence[:8]]
-        return "\n".join(
-            [
-                f"Title: {finding.title}",
-                f"Source: {finding.source}",
-                f"Category: {finding.category}",
-                f"Asset: {finding.asset}",
-                f"Detected severity: {finding.severity.value}",
-                f"Detected confidence: {finding.confidence}",
-                f"Description: {finding.description[:600]}",
-                "Evidence:",
-                *(evidence_lines or ["- (none recorded)"]),
-                f"Raw tool output: {json.dumps(finding.raw, default=str)[:limit]}",
-            ]
+        return redact(
+            "\n".join(
+                [
+                    f"Title: {finding.title}",
+                    f"Source: {finding.source}",
+                    f"Category: {finding.category}",
+                    f"Asset: {finding.asset}",
+                    f"Detected severity: {finding.severity.value}",
+                    f"Detected confidence: {finding.confidence}",
+                    f"Description: {finding.description[:600]}",
+                    "Evidence:",
+                    *(evidence_lines or ["- (none recorded)"]),
+                    f"Raw tool output: {json.dumps(redact(finding.raw), default=str)[:limit]}",
+                ]
+            )
         )

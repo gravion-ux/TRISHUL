@@ -49,7 +49,7 @@ from backend.app.ai.registry import AIManager  # noqa: E402
 from backend.app.core.config import get_settings  # noqa: E402
 from backend.app.core.scope import ScopePolicy  # noqa: E402
 from backend.app.core.secrets import CredentialStore  # noqa: E402
-from backend.app.core.security import hash_password  # noqa: E402
+from backend.app.core.security import RateLimiter, hash_password  # noqa: E402
 from backend.app.core.storage import Storage  # noqa: E402
 from backend.app.engine.base import Adapters  # noqa: E402
 from backend.app.engine.master import MasterAgent  # noqa: E402
@@ -172,6 +172,24 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "health_service", local_health)
     monkeypatch.setattr(main_module, "master_agent", local_master)
     monkeypatch.setattr(main_module, "task_manager", local_tasks)
+    # The rate limiters are module-level singletons. A fresh one per test
+    # keeps one test's traffic from consuming the next test's budget.
+    monkeypatch.setattr(
+        main_module,
+        "rate_limiter",
+        RateLimiter(
+            limit=local_settings.security.rate_limit_requests,
+            window_seconds=local_settings.security.rate_limit_window_seconds,
+        ),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "login_limiter",
+        RateLimiter(
+            limit=local_settings.security.login_rate_limit_attempts,
+            window_seconds=local_settings.security.login_rate_limit_window_seconds,
+        ),
+    )
 
     with TestClient(main_module.app) as test_client:
         yield test_client

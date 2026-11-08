@@ -35,7 +35,9 @@ local, deterministic and reversible: restore the bundled list to undo it.
 
 Only use additional wordlists that you are authorised to use against the
 target. Large wordlists increase request volume against the target — keep the
-request budget in `config/default.yaml` (`scan.ffuf_max_requests`) in mind.
+request budget in `config/default.yaml` (`scan.ffuf_max_requests`) in mind. That
+budget is enforced: the wordlists are trimmed into the scan's artifact directory
+so that the fuzzing requests one scan issues stay within it.
 
 ## Nuclei templates
 

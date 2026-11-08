@@ -29,10 +29,19 @@ TRISHUL resolves the active configuration in this order:
 
 1. **A saved provider configuration** (stored in the database, changed through the CLI,
    the dashboard or `POST /api/providers/config`). This always wins.
-2. **The YAML defaults** in `config/default.yaml` — or in `config/default.local.yaml` /
+2. **Environment overrides**: `TRISHUL_EDITION`, `TRISHUL_AI_PROVIDER`,
+   `TRISHUL_AI_MODEL`, `TRISHUL_AI_BASE_URL`, `TRISHUL_AI_TIMEOUT`. These are applied
+   on top of the YAML file.
+3. **The YAML defaults** in `config/default.yaml` — or in `config/default.local.yaml` /
    `config/default.provider.yaml` when `TRISHUL_CONFIG` points at them.
-3. **Environment overrides**: `TRISHUL_EDITION`, `TRISHUL_AI_PROVIDER`,
-   `TRISHUL_AI_MODEL`, `TRISHUL_AI_BASE_URL`, `TRISHUL_AI_TIMEOUT`.
+4. **The provider catalogue default** — the endpoint and model documented for the
+   selected provider. This is the lowest layer and only applies when nothing above it
+   supplies a value.
+
+A saved configuration therefore outranks an environment variable: pinning
+`TRISHUL_AI_MODEL` does not override a model that was already saved through the
+dashboard. Clear the saved configuration (`DELETE /api/providers/config`) to fall back
+to the environment and the file again.
 
 API keys are never part of the configuration file. They are resolved from the encrypted
 credential store first, and from the environment variables in the table above second.

@@ -11,6 +11,7 @@ import asyncio
 import ipaddress
 import socket
 from typing import Iterable
+from urllib.parse import urlparse
 
 from backend.app.core.utils import is_ip
 
@@ -94,8 +95,9 @@ class ScopePolicy:
     async def resolve_addresses(self, host: str) -> list[str]:
         """Resolve ``host`` to every address it maps to.
 
-        DNS results are cached for the lifetime of the policy object so that
-        a single scan does not re-resolve the same host for every tool.
+        The name is resolved on every check rather than cached, so a host
+        that starts resolving to a blocked address is caught at the next
+        request instead of being trusted for the rest of the scan.
         """
         if is_ip(host):
             return [host]
@@ -146,3 +148,17 @@ class ScopePolicy:
                     "Set TRISHUL_ALLOW_PRIVATE_TARGETS=1 if this is an authorized internal test."
                 )
         return addresses
+
+    async def check_url(self, url: str) -> str:
+        """Validate the host of ``url`` and return it.
+
+        This is the URL-shaped entry point used by the verification
+        agent: every request it makes -- and every redirect hop it
+        follows -- is checked here before a socket is opened.
+        """
+        parsed = urlparse(url or "")
+        host = (parsed.hostname or "").strip()
+        if not host:
+            raise ScopeError(f"Could not determine a host from {url!r}.")
+        await self.check(host)
+        return host

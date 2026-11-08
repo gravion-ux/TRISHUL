@@ -11,6 +11,7 @@ from __future__ import annotations
 import httpx
 
 from backend.app.ai.base import AIProvider, AIRequest, AIResponse, ProviderError
+from backend.app.core.url_guard import request_with_safe_redirects
 from backend.app.models import ProviderKind
 
 
@@ -49,8 +50,11 @@ class OpenAICompatibleProvider(AIProvider):
         started = self._timer()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
+                response = await request_with_safe_redirects(
+                    client,
                     f"{self.base_url}/chat/completions",
+                    guard=self.guard,
+                    method="POST",
                     json=payload,
                     headers=self._headers(),
                 )
@@ -84,7 +88,12 @@ class OpenAICompatibleProvider(AIProvider):
     async def list_models(self) -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=min(self.timeout, 15)) as client:
-                response = await client.get(f"{self.base_url}/models", headers=self._headers())
+                response = await request_with_safe_redirects(
+                    client,
+                    f"{self.base_url}/models",
+                    guard=self.guard,
+                    headers=self._headers(),
+                )
         except httpx.HTTPError as exc:
             raise ProviderError(f"AI endpoint is not reachable at {self.base_url}: {exc}") from exc
         if response.status_code != 200:

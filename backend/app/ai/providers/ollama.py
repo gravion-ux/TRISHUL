@@ -11,6 +11,7 @@ from __future__ import annotations
 import httpx
 
 from backend.app.ai.base import AIProvider, AIRequest, AIResponse, ProviderError
+from backend.app.core.url_guard import request_with_safe_redirects
 from backend.app.models import ProviderKind
 
 
@@ -40,8 +41,12 @@ class OllamaProvider(AIProvider):
         started = self._timer()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/chat", json=payload
+                response = await request_with_safe_redirects(
+                    client,
+                    f"{self.base_url}/api/chat",
+                    guard=self.guard,
+                    method="POST",
+                    json=payload,
                 )
         except httpx.HTTPError as exc:
             raise ProviderError(f"Ollama request failed: {exc}") from exc
@@ -69,7 +74,11 @@ class OllamaProvider(AIProvider):
     async def list_models(self) -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=min(self.timeout, 15)) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
+                response = await request_with_safe_redirects(
+                    client,
+                    f"{self.base_url}/api/tags",
+                    guard=self.guard,
+                )
         except httpx.HTTPError as exc:
             raise ProviderError(f"Ollama is not reachable at {self.base_url}: {exc}") from exc
         if response.status_code != 200:

@@ -45,13 +45,19 @@ class ReportingService:
 
         payload = redact(scan.model_dump(mode="json"))
         json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+        # Every format is rendered from the redacted record. A credential
+        # that a tool captured must not reach the Markdown, the HTML or
+        # the bug-bounty write-up either.
+        safe_scan = self._redacted_scan(scan)
+        safe_summary = redact(executive_summary)
         markdown_path.write_text(
-            self._markdown(scan, executive_summary), encoding="utf-8"
+            self._markdown(safe_scan, safe_summary), encoding="utf-8"
         )
         html_path.write_text(
-            self._html(scan, executive_summary), encoding="utf-8"
+            self._html(safe_scan, safe_summary), encoding="utf-8"
         )
-        bounty_path.write_text(self._bounty(scan), encoding="utf-8")
+        bounty_path.write_text(self._bounty(safe_scan), encoding="utf-8")
 
         return {
             "json": str(json_path),
@@ -59,6 +65,11 @@ class ReportingService:
             "html": str(html_path),
             "bug_bounty": str(bounty_path),
         }
+
+    @staticmethod
+    def _redacted_scan(scan: ScanRecord) -> ScanRecord:
+        """Return a copy of ``scan`` with every credential redacted."""
+        return ScanRecord.model_validate(redact(scan.model_dump(mode="json")))
 
     # -- markdown ----------------------------------------------------------
 

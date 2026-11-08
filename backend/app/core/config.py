@@ -123,6 +123,11 @@ class SecurityConfig(BaseModel):
     authorized_targets: list[str] = Field(default_factory=list)
     rate_limit_requests: int = 120
     rate_limit_window_seconds: int = 60
+    # The login endpoint gets its own, much tighter budget. It is the one
+    # route that accepts a password, so it must not be usable to grind
+    # credentials even when the general request budget is generous.
+    login_rate_limit_attempts: int = 10
+    login_rate_limit_window_seconds: int = 60
     blocked_hostnames: list[str] = Field(
         default_factory=lambda: [
             "169.254.169.254",
@@ -236,9 +241,11 @@ def _apply_provider_selection(settings: Settings, yaml_provider: str) -> Setting
 
     Rules:
 
-    * An explicit ``TRISHUL_AI_PROVIDER`` always wins. The module documents
-      environment variables as the highest-precedence configuration layer, so
-      the edition default must never silently rewrite an operator's choice.
+    * An explicit ``TRISHUL_AI_PROVIDER`` always wins. Within the *settings*
+      layer the environment is the highest-precedence source, so the edition
+      default must never silently rewrite an operator's choice. (A provider
+      configuration saved in the database outranks the environment entirely;
+      see ``AIManager.current_config``.)
     * The PROVIDER edition prefers a hosted provider over a local one, but
       only when the provider was not chosen explicitly.
     * An explicit ``TRISHUL_AI_BASE_URL`` / ``TRISHUL_AI_MODEL`` always wins.

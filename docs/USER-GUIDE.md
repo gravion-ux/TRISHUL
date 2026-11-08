@@ -162,8 +162,8 @@ Useful flags:
 | Flag | Effect |
 |---|---|
 | `--mode quick` | Faster profile with less fuzzing |
-| `--threads 16` | More parallel tool workers (1–32) |
-| `--timeout 1800` | Longer per-tool timeout |
+| `--threads 16` | More parallel tool workers (1–32). Omit to use `scan.thread_limit` from the configuration. |
+| `--timeout 1800` | Longer per-tool timeout. Omit to use `scan.timeout_seconds` from the configuration. |
 | `--auth-note "AC-2026-0142"` | Supply the authorization note non-interactively |
 | `--yes` | Skip the `YES` prompt (the note is still required) |
 | `--no-interactive` | Do not ask what to do after the scan |
@@ -190,6 +190,11 @@ curl -s -X POST http://127.0.0.1:8000/api/scans \
 
 Both `authorized: true` and an `authorization_note` of at least 5 characters are
 required; otherwise the request is rejected with `400` or `422`.
+
+`thread_limit` and `timeout_seconds` are optional. When you leave them out, TRISHUL
+uses `scan.thread_limit` and `scan.timeout_seconds` from the configuration. When you
+do supply them, those are the exact limits the scan runs with — the resolved values are
+stored on the scan record.
 
 ---
 

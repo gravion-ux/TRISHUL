@@ -20,10 +20,18 @@ class ScannerAgent(BaseAgent):
         output_dir = ctx.scan_dir / "artifacts" / "scan"
 
         nmap_task = ctx.adapters.nmap.run(
-            profile["host"], output_dir / "nmap", scan.mode, scope=ctx.scope
+            profile["host"],
+            output_dir / "nmap",
+            scan.mode,
+            scope=ctx.scope,
+            limits=ctx.limits,
         )
         nuclei_task = ctx.adapters.nuclei.run(
-            live_urls, output_dir / "nuclei", scan.mode, scope=ctx.scope
+            live_urls,
+            output_dir / "nuclei",
+            scan.mode,
+            scope=ctx.scope,
+            limits=ctx.limits,
         )
         nmap_result, nuclei_results = await asyncio.gather(
             nmap_task, nuclei_task, return_exceptions=True

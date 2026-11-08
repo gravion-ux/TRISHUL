@@ -173,6 +173,18 @@ class ScanProgress(BaseModel):
     message: str = "Queued"
 
 
+class ScanLimits(BaseModel):
+    """The effective execution limits of one scan.
+
+    These are the values the tool adapters actually use. They come from
+    the scan request when the operator supplied one, and from the
+    configured defaults otherwise.
+    """
+
+    thread_limit: int = 8
+    timeout_seconds: int = 900
+
+
 class ScanLog(BaseModel):
     """One progress/log line attached to a scan."""
 
@@ -191,6 +203,10 @@ class ScanRecord(BaseModel):
     target: str
     mode: ScanMode
     status: ScanStatus
+    # The execution limits this scan runs with. ``None`` means "use the
+    # configured default"; they are resolved when the scan is created.
+    thread_limit: int | None = None
+    timeout_seconds: int | None = None
     progress: ScanProgress = Field(default_factory=ScanProgress)
     findings: list[Finding] = Field(default_factory=list)
     enrichment: list[dict[str, Any]] = Field(default_factory=list)
@@ -207,14 +223,20 @@ class ScanRecord(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    """Inbound request to start an assessment."""
+    """Inbound request to start an assessment.
+
+    ``thread_limit`` and ``timeout_seconds`` are optional: when they are
+    omitted the configured defaults (``scan.thread_limit`` and
+    ``scan.timeout_seconds``) are used. When they are supplied they are
+    the limits the scan actually runs with.
+    """
 
     target: str = Field(min_length=1, max_length=512)
     mode: ScanMode = ScanMode.DEEP
     authorized: bool
     authorization_note: str = Field(min_length=5, max_length=1000)
-    thread_limit: int = Field(default=8, ge=1, le=32)
-    timeout_seconds: int = Field(default=900, ge=30, le=7200)
+    thread_limit: int | None = Field(default=None, ge=1, le=32)
+    timeout_seconds: int | None = Field(default=None, ge=30, le=7200)
 
 
 class ScanStartResponse(BaseModel):

@@ -140,8 +140,8 @@ trishul example.com --mode deep
 | Flag | Meaning |
 |---|---|
 | `--mode quick\|deep` | Scan profile. `deep` enables the full template set and fuzzing. |
-| `--threads N` | Tool thread limit (1–32). |
-| `--timeout N` | Per-tool timeout in seconds. |
+| `--threads N` | Tool thread limit (1–32). Omit to use `scan.thread_limit` from the configuration. |
+| `--timeout N` | Per-tool timeout in seconds. Omit to use `scan.timeout_seconds` from the configuration. |
 | `--auth-note "..."` | Authorization reference (ticket, program, scope). |
 | `--yes` | Skip the interactive `YES` confirmation (a note is still required). |
 | `--no-interactive` | Do not prompt for post-scan actions. |

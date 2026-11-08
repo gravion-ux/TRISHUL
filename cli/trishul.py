@@ -388,8 +388,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("target", nargs="?", help="Target host or URL to assess.")
     parser.add_argument("--mode", default="deep", choices=["quick", "deep"], help="Scan depth.")
-    parser.add_argument("--threads", type=int, default=8, help="Tool thread limit (1-32).")
-    parser.add_argument("--timeout", type=int, default=900, help="Per-tool timeout in seconds.")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="Tool thread limit (1-32). Omit to use scan.thread_limit from the configuration.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Per-tool timeout in seconds. Omit to use scan.timeout_seconds from the configuration.",
+    )
     parser.add_argument(
         "--yes", action="store_true", help="Skip the interactive authorisation prompt."
     )

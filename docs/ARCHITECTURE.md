@@ -159,13 +159,41 @@ Report`.
 | 3 | `fuzz` | `FuzzerAgent` | `ffuf` | Fuzzing hits filtered by the configured status list |
 | 4 | `detect` | `DetectionAgent` | — (analysis) | Candidate findings from scanner and fuzzer output, with a deterministic evidence score |
 | 5 | `verify` | `VerificationAgent`, `ReasoningEngine` | optional re-checks | Verified state, de-duplication, ranking; the AI sets severity, confidence and the verified flag |
-| 6 | `poc` | `PoCEngine` | — (AI) | `PocBundle`: reproduction steps, request/response examples, impact, remediation, screenshot guide, video script, bounty report |
+| 6 | `poc` | `PoCEngine` | — (AI, validated) | `PocBundle`: reproduction steps, request/response examples, impact, remediation, screenshot guide, video script, bounty report |
 | 7 | `guide` | `GuideEngine` | — (AI) | `GuideStep` list for manual, non-destructive reproduction |
 | 8 | `report` | `ReportAgent` | — | JSON, Markdown, HTML and bug-bounty reports, plus `report_paths` |
 
 `ReasoningEngine` runs **inside** the `verify` stage; it is not a separate stage. The
 WebSocket stage sequence is `queued`, `recon`, `scan`, `fuzz`, `detect`, `verify`, `poc`,
 `guide`, `report`, then `completed` — or `failed` / `cancelled`.
+
+### The proof of concept has a deterministic backbone
+
+`PoCEngine` always builds a deterministic, non-destructive bundle first. That bundle is
+what gets published unless a model contributes something that passes validation.
+
+- A model reply is validated field by field. Destructive commands are refused in every
+  field; the instructional fields (the steps and the request example) are additionally
+  held to the intent rule and to the state-changing-request rule.
+- A validated reply **augments** the deterministic bundle: the model steps are appended
+  to the deterministic steps, and the model may supply the request example, the impact,
+  the remediation and the two guides.
+- A reply that fails validation is discarded whole. The deterministic bundle is
+  published unchanged and the reason is recorded in the scan's AI diagnostics
+  (`ctx.ai_errors`).
+- `generated_by` is `deterministic` or `ai` depending on whether validated model
+  content was merged, and the bounty report is rendered from the steps that are actually
+  published.
+
+See `docs/SECURITY.md` for the full list of refused patterns.
+
+### Reports are redacted in every format
+
+The report writer renders four formats — `report.json`, `report.md`, `report.html` and
+`report.bounty.md`. All four are built from a **redacted** copy of the scan, so the
+Markdown, HTML and bug-bounty formats cannot leak a credential that the JSON format
+would have masked. The same redaction is applied when a finding is created, so the
+stored record is already clean.
 
 ### Severity and confidence
 
@@ -238,6 +266,7 @@ The catalog that ships with TRISHUL:
 | Model discovery | `GET /api/providers/models?provider=&base_url=` lists the models the endpoint exposes |
 | Failure behaviour | The call returns `fallback: true`; the deterministic score stands and the AI is marked unavailable |
 | Reset | `DELETE /api/providers/config` restores the defaults of the current edition |
+| Endpoint validation | The base URL is validated when it is saved (`400` when it fails) and again before every request. Redirects are followed manually and every hop is re-validated; a credential header is dropped as soon as the chain crosses an origin boundary |
 
 Exact base URLs, default models and key environment variables are listed in
 [`PROVIDERS.md`](PROVIDERS.md).
@@ -272,6 +301,7 @@ TRISHUL/
 │       │   ├── config.py        Settings loaded from config/default.yaml
 │       │   ├── storage.py       SQLite persistence (scans, findings, guides)
 │       │   ├── scope.py         Target normalization and scope policy
+│       │   ├── url_guard.py     URL validation for operator-configured endpoints
 │       │   ├── security.py      Rate limiting, redaction helpers, security checks
 │       │   ├── secrets.py       Fernet-encrypted credential store
 │       │   ├── migrations.py    Migration runner (python -m backend.app.core.migrations)
@@ -312,14 +342,16 @@ environment variable.
 | `tools` | Binary names, wordlists and the executable allowlist | `httpx`, `nuclei`, `ffuf`, `nmap`, `ffuf_wordlist`, `param_wordlist`, `allowed_binaries` |
 | `ai` | Edition, provider, model, base URL and request shaping | `edition`, `provider`, `model`, `base_url`, `timeout_seconds`, `max_tokens`, `temperature`, `fail_open` |
 | `auth` | Admin identity and token lifetime | `enabled`, `username`, `password`, `token_ttl_seconds` |
-| `security` | Policy gates | `allow_private_targets`, `authorized_targets`, `rate_limit_requests`, `rate_limit_window_seconds`, `blocked_hostnames` |
+| `security` | Policy gates | `allow_private_targets`, `authorized_targets`, `rate_limit_requests`, `rate_limit_window_seconds`, `login_rate_limit_attempts`, `login_rate_limit_window_seconds`, `blocked_hostnames` |
 | `integrations` | Defaults for the optional enrichment system | `cache_ttl_seconds`, `rate_limit_per_minute`, `timeout_seconds`, `max_response_bytes` |
 
-Environment overrides (highest precedence): `TRISHUL_CONFIG` (alternative YAML path),
-`TRISHUL_EDITION`, `TRISHUL_AI_PROVIDER`, `TRISHUL_AI_MODEL`, `TRISHUL_AI_BASE_URL`,
-`TRISHUL_AI_TIMEOUT`, `TRISHUL_ADMIN_USER`, `TRISHUL_ADMIN_PASSWORD`,
-`TRISHUL_API_HOST`, `TRISHUL_API_PORT`, `TRISHUL_ALLOW_PRIVATE_TARGETS`,
-`TRISHUL_LOG_LEVEL`, and `TRISHUL_MASTER_KEY` for the credential-encryption master key.
+Environment overrides (highest precedence *within the settings layer*): `TRISHUL_CONFIG`
+(alternative YAML path), `TRISHUL_EDITION`, `TRISHUL_AI_PROVIDER`, `TRISHUL_AI_MODEL`,
+`TRISHUL_AI_BASE_URL`, `TRISHUL_AI_TIMEOUT`, `TRISHUL_ADMIN_USER`,
+`TRISHUL_ADMIN_PASSWORD`, `TRISHUL_API_HOST`, `TRISHUL_API_PORT`,
+`TRISHUL_ALLOW_PRIVATE_TARGETS`, `TRISHUL_LOG_LEVEL`, and `TRISHUL_MASTER_KEY` for the
+credential-encryption master key. A provider configuration saved in the database
+outranks all of them — see `docs/PROVIDERS.md`.
 
 The backend binds to `127.0.0.1:8000` by default. Expose it deliberately — behind a
 TLS-terminating reverse proxy — because bearer tokens travel in the `Authorization`
@@ -340,9 +372,16 @@ header and in the WebSocket query string.
   running at once is bounded by `scan.max_concurrent_scans`, and each invocation carries
   a timeout (`scan.timeout_seconds`, 30–7200) so a hung binary cannot pin the scan
   forever.
+- A scan may override both numbers. `thread_limit` and `timeout_seconds` on the scan
+  request are optional; when supplied they are resolved, stored on the scan record and
+  carried to the adapters through the agent context, so the tools run with exactly
+  those values. When they are omitted the configured defaults are used.
 - Fuzzing is bounded by `scan.ffuf_max_requests` (default 2000) and filtered by
   `scan.ffuf_status_filter`, so a scan cannot turn into an unbounded request storm
-  against the target.
+  against the target. The budget is the number of fuzzing words one scan may spend:
+  the wordlists are trimmed into the scan's artifact directory and ffuf is pointed at
+  the trimmed copies, so the budget is enforced on the requests that are actually
+  issued rather than merely configured.
 - Subprocesses are created with `asyncio.create_subprocess_exec` — argument vectors, no
   shell — and are terminated on timeout or cancellation.
 

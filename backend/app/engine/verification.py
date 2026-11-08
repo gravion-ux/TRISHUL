@@ -3,6 +3,11 @@
 The agent runs a set of independent, *non-destructive* checks against every
 finding. Those checks produce a deterministic ``baseline_confidence`` score.
 
+Every check is gated by the scope policy. A finding names an asset that
+came out of tool output, so it may point at anything at all: the agent
+asks the policy before it opens a socket, and it re-validates every
+redirect hop instead of letting the HTTP client follow the chain.
+
 When an AI model is reachable it is then asked to adjudicate the finding.
 The AI verdict has full authority over the published severity, confidence and
 verified state — the deterministic baseline is preserved separately so the
@@ -12,12 +17,14 @@ override remains auditable.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import httpx
 
-from backend.app.core.utils import redact_text
+from backend.app.core.scope import ScopeError
+from backend.app.core.url_guard import UrlGuardError, request_with_safe_redirects
+from backend.app.core.utils import redact, redact_text
 from backend.app.engine.base import AgentContext, BaseAgent
 from backend.app.models import AiVerdict, Evidence, Finding, Severity
 
@@ -58,6 +65,30 @@ class VerificationAgent(BaseAgent):
 
     name = "VerificationAgent"
 
+    #: How long a single verification request may take.
+    request_timeout = 10.0
+
+    def __init__(
+        self,
+        storage: Any,
+        ai: Any = None,
+        *,
+        client_factory: Callable[..., httpx.AsyncClient] | None = None,
+    ) -> None:
+        super().__init__(storage, ai)
+        self.client_factory = client_factory or self._default_client
+
+    def _default_client(self, *, verify: bool = True) -> httpx.AsyncClient:
+        """Build the HTTP client used for verification requests.
+
+        Redirects are never followed automatically: every hop is
+        re-validated against the scope policy by
+        :func:`request_with_safe_redirects`.
+        """
+        return httpx.AsyncClient(
+            timeout=self.request_timeout, follow_redirects=False, verify=verify
+        )
+
     async def run(
         self,
         ctx: AgentContext,
@@ -81,9 +112,7 @@ class VerificationAgent(BaseAgent):
         for finding in findings:
             source_by_asset.setdefault(finding.asset, set()).add(finding.source)
 
-        async with httpx.AsyncClient(
-            timeout=10.0, follow_redirects=True, verify=True
-        ) as client:
+        async with self.client_factory(verify=True) as client:
             for finding in findings:
                 checks = await self._run_checks(
                     ctx, finding, open_ports, live_hosts, source_by_asset, client
@@ -115,6 +144,7 @@ class VerificationAgent(BaseAgent):
             "asset_live": False,
             "corroborated": len(source_by_asset.get(finding.asset, set())) > 1,
             "active_successes": 0,
+            "scope_blocked": False,
             "notes": [],
         }
 
@@ -132,35 +162,79 @@ class VerificationAgent(BaseAgent):
             except ValueError:
                 port = 0
             if port:
-                checks["tcp_open"] = await self._tcp_probe(host, port)
-                if checks["tcp_open"]:
-                    checks["active_successes"] += 1
-                if (finding.asset.split(":")[0], port) in open_ports:
-                    checks["notes"].append("Port confirmed by the nmap scan result.")
+                # Opening a socket is an outbound request: it needs the
+                # same authorisation as any other contact with the host.
+                if await self._in_scope(ctx, host):
+                    checks["tcp_open"] = await self._tcp_probe(host, port)
+                    if checks["tcp_open"]:
+                        checks["active_successes"] += 1
+                    if (finding.asset.split(":")[0], port) in open_ports:
+                        checks["notes"].append("Port confirmed by the nmap scan result.")
+                else:
+                    checks["scope_blocked"] = True
+                    note = (
+                        f"The service on {host} was not probed because the host is outside "
+                        "the authorised scope of this engagement."
+                    )
+                    checks["notes"].append(note)
+                    finding.evidence.append(
+                        Evidence(
+                            source="verification",
+                            summary=note,
+                            raw={"scope_blocked": True, "asset": host},
+                        )
+                    )
 
         if finding.source in {"nuclei", "ffuf", "httpx"}:
             asset = finding.asset if finding.asset.startswith(("http://", "https://")) else ctx.scan.target
-            status, body_preview, blocked = await self._http_probe(client, asset)
-            checks["http_status"] = status
-            checks["http_blocked"] = blocked
-            if status is not None:
+            try:
+                status, body_preview, blocked = await self._http_probe(ctx, client, asset)
+            except ScopeError as exc:
+                checks["scope_blocked"] = True
+                note = (
+                    f"HTTP verification of {asset} was skipped because the host is outside "
+                    f"the authorised scope of this engagement ({exc})."
+                )
+                checks["notes"].append(note)
                 finding.evidence.append(
                     Evidence(
                         source="verification",
-                        summary=f"HTTP verification returned {status} for {asset}",
-                        raw={"status_code": status, "body_preview": body_preview[:400]},
+                        summary=note,
+                        raw={"scope_blocked": True, "asset": asset},
                     )
                 )
-                if status < 500 and not blocked:
-                    checks["http_ok"] = True
-                    checks["active_successes"] += 1
-                elif blocked:
-                    checks["notes"].append(
-                        "The response looked like an error or WAF block page rather than the "
-                        "vulnerable behaviour."
+            else:
+                checks["http_status"] = status
+                checks["http_blocked"] = blocked
+                if status is not None:
+                    finding.evidence.append(
+                        Evidence(
+                            source="verification",
+                            summary=f"HTTP verification returned {status} for {asset}",
+                            raw=redact(
+                                {"status_code": status, "body_preview": body_preview[:400]}
+                            ),
+                        )
                     )
+                    if status < 500 and not blocked:
+                        checks["http_ok"] = True
+                        checks["active_successes"] += 1
+                    elif blocked:
+                        checks["notes"].append(
+                            "The response looked like an error or WAF block page rather than the "
+                            "vulnerable behaviour."
+                        )
 
         return checks
+
+    @staticmethod
+    async def _in_scope(ctx: AgentContext, host: str) -> bool:
+        """Return whether ``host`` may be contacted under the scope policy."""
+        try:
+            await ctx.scope.check(host)
+        except ScopeError:
+            return False
+        return True
 
     @staticmethod
     async def _tcp_probe(host: str, port: int) -> bool:
@@ -175,23 +249,34 @@ class VerificationAgent(BaseAgent):
             pass
         return True
 
-    @staticmethod
     async def _http_probe(
-        client: httpx.AsyncClient, url: str
+        self, ctx: AgentContext, client: httpx.AsyncClient, url: str
     ) -> tuple[int | None, str, bool]:
         """Fetch ``url`` without mutating anything.
 
         Returns ``(status_code, body_preview, looks_like_a_block_page)``.
+
+        Raises
+        ------
+        ScopeError
+            When the URL -- or any redirect hop on the way to it -- is
+            outside the authorised scope.
         """
         try:
-            response = await client.get(url)
-        except httpx.HTTPError as exc:
+            response = await request_with_safe_redirects(client, url, guard=ctx.scope)
+        except ScopeError:
+            raise
+        except (httpx.HTTPError, UrlGuardError) as exc:
             # A TLS failure is common on assessment targets; retry without
             # certificate verification and record that we did so.
             try:
-                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, verify=False) as insecure:
-                    response = await insecure.get(url)
-            except httpx.HTTPError:
+                async with self.client_factory(verify=False) as insecure:
+                    response = await request_with_safe_redirects(
+                        insecure, url, guard=ctx.scope
+                    )
+            except ScopeError:
+                raise
+            except (httpx.HTTPError, UrlGuardError):
                 return None, redact_text(str(exc)), False
 
         body = response.text[:800]
@@ -282,11 +367,13 @@ class VerificationAgent(BaseAgent):
                 finding.evidence.append(
                     Evidence(
                         source="ai",
-                        summary=f"AI remediation advice: {verdict.remediation}",
-                        raw={"remediation": verdict.remediation},
+                        summary=f"AI remediation advice: {redact_text(verdict.remediation)}",
+                        raw=redact({"remediation": verdict.remediation}),
                     )
                 )
-                finding.raw = {**(finding.raw or {}), "ai_remediation": verdict.remediation}
+                finding.raw = redact(
+                    {**(finding.raw or {}), "ai_remediation": verdict.remediation}
+                )
 
     @staticmethod
     def _parse_verdict(payload: dict[str, Any]) -> AiVerdict | None:

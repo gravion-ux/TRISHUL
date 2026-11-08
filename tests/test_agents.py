@@ -394,7 +394,7 @@ async def test_verification_ai_verdict_overrides_severity_and_confidence(ctx, mo
     async def fake_tcp(host, port):
         return True
 
-    async def fake_http(client, url):
+    async def fake_http(_ctx, client, url):
         return 200, "ok body", False
 
     monkeypatch.setattr(VerificationAgent, "_tcp_probe", staticmethod(fake_tcp))
@@ -438,7 +438,7 @@ async def test_verification_ai_false_positive_downgrades(ctx, monkeypatch):
     async def fake_tcp(host, port):
         return False
 
-    async def fake_http(client, url):
+    async def fake_http(_ctx, client, url):
         return 200, "ok body", False
 
     monkeypatch.setattr(VerificationAgent, "_tcp_probe", staticmethod(fake_tcp))
@@ -474,7 +474,7 @@ async def test_verification_ai_failure_keeps_deterministic_baseline(ctx, monkeyp
     async def fake_tcp(host, port):
         return False
 
-    async def fake_http(client, url):
+    async def fake_http(_ctx, client, url):
         return 200, "ok body", False
 
     monkeypatch.setattr(VerificationAgent, "_tcp_probe", staticmethod(fake_tcp))
@@ -497,7 +497,7 @@ async def test_verification_without_ai_does_not_crash(ctx, monkeypatch):
     async def fake_tcp(host, port):
         return False
 
-    async def fake_http(client, url):
+    async def fake_http(_ctx, client, url):
         return None, "", False
 
     monkeypatch.setattr(VerificationAgent, "_tcp_probe", staticmethod(fake_tcp))
@@ -675,9 +675,13 @@ async def test_poc_ai_bundle_is_preferred_when_available(ctx):
     bundle = result[0].poc
     assert bundle is not None
     assert bundle.generated_by == "ai"
-    assert bundle.steps_to_reproduce == ["Open the URL in a clean browser session."]
-    # The bounty report is always rendered from the deterministic template.
+    # The deterministic steps stay the backbone and the validated AI step is
+    # appended to them -- the AI never replaces the safe bundle.
+    assert any("approved scope" in step for step in bundle.steps_to_reproduce)
+    assert "Open the URL in a clean browser session." in bundle.steps_to_reproduce
+    # The bounty report is rendered from the steps that are actually published.
     assert "Steps to Reproduce" in bundle.bounty_report
+    assert "Open the URL in a clean browser session." in bundle.bounty_report
 
 
 @pytest.mark.asyncio

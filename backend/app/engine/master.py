@@ -92,6 +92,11 @@ class MasterAgent:
             updated_at=now,
             authorized=request.authorized,
             authorization_note=request.authorization_note,
+            # The limits the operator asked for, or the configured
+            # defaults. They are stored on the record so that the tools
+            # run with exactly these values.
+            thread_limit=request.thread_limit or self.settings.scan.thread_limit,
+            timeout_seconds=request.timeout_seconds or self.settings.scan.timeout_seconds,
             ai_provider=self.ai.current_config().provider.value,
             ai_model=self.ai.current_config().model,
         )

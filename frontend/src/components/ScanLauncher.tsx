@@ -11,8 +11,8 @@ interface FormState {
   target: string;
   mode: ScanMode;
   authorization_note: string;
-  thread_limit: number;
-  timeout_seconds: number;
+  thread_limit: string;
+  timeout_seconds: string;
   authorized: boolean;
 }
 
@@ -20,8 +20,8 @@ const INITIAL_FORM: FormState = {
   target: "",
   mode: "deep",
   authorization_note: "",
-  thread_limit: 8,
-  timeout_seconds: 900,
+  thread_limit: "",
+  timeout_seconds: "",
   authorized: false,
 };
 
@@ -43,15 +43,17 @@ export default function ScanLauncher({ onLaunch, busy, serverError }: ScanLaunch
     if (form.authorization_note.trim().length < 5) {
       return "The authorization note must be at least 5 characters (scope, ticket or approval).";
     }
-    if (!Number.isInteger(form.thread_limit) || form.thread_limit < 1 || form.thread_limit > 32) {
-      return "Threads must be an integer between 1 and 32.";
+    if (form.thread_limit.trim() !== "") {
+      const threads = Number(form.thread_limit);
+      if (!Number.isInteger(threads) || threads < 1 || threads > 32) {
+        return "Threads must be an integer between 1 and 32.";
+      }
     }
-    if (
-      !Number.isInteger(form.timeout_seconds) ||
-      form.timeout_seconds < 30 ||
-      form.timeout_seconds > 7200
-    ) {
-      return "Timeout must be between 30 and 7200 seconds.";
+    if (form.timeout_seconds.trim() !== "") {
+      const timeout = Number(form.timeout_seconds);
+      if (!Number.isInteger(timeout) || timeout < 30 || timeout > 7200) {
+        return "Timeout must be between 30 and 7200 seconds.";
+      }
     }
     return null;
   };
@@ -63,14 +65,21 @@ export default function ScanLauncher({ onLaunch, busy, serverError }: ScanLaunch
     if (problem) {
       return;
     }
-    await onLaunch({
+    const request: ScanRequest = {
       target: form.target.trim(),
       mode: form.mode,
       authorized: form.authorized,
       authorization_note: form.authorization_note.trim(),
-      thread_limit: form.thread_limit,
-      timeout_seconds: form.timeout_seconds,
-    });
+    };
+    // An empty field means "use the configured default", so it is left out of
+    // the request entirely rather than sent as a hard-coded value.
+    if (form.thread_limit.trim() !== "") {
+      request.thread_limit = Number(form.thread_limit);
+    }
+    if (form.timeout_seconds.trim() !== "") {
+      request.timeout_seconds = Number(form.timeout_seconds);
+    }
+    await onLaunch(request);
   };
 
   const error = localError ?? serverError;
@@ -140,8 +149,9 @@ export default function ScanLauncher({ onLaunch, busy, serverError }: ScanLaunch
               type="number"
               min={1}
               max={32}
+              placeholder="configured default"
               value={form.thread_limit}
-              onChange={(event) => update("thread_limit", Number(event.target.value))}
+              onChange={(event) => update("thread_limit", event.target.value)}
             />
           </div>
 
@@ -153,11 +163,16 @@ export default function ScanLauncher({ onLaunch, busy, serverError }: ScanLaunch
               type="number"
               min={30}
               max={7200}
+              placeholder="configured default"
               value={form.timeout_seconds}
-              onChange={(event) => update("timeout_seconds", Number(event.target.value))}
+              onChange={(event) => update("timeout_seconds", event.target.value)}
             />
           </div>
         </div>
+        <small className="muted">
+          Leave both empty to use the configured scan limits. A value here overrides them for
+          this scan only.
+        </small>
 
         <div className="checkbox field">
           <input

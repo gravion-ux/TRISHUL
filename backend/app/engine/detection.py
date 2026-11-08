@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.app.core.utils import stable_id
+from backend.app.core.utils import redact, stable_id
 from backend.app.engine.base import AgentContext, BaseAgent
 from backend.app.models import Evidence, Finding, Severity
 
@@ -15,6 +15,11 @@ class DetectionAgent(BaseAgent):
     Detection is deterministic: it only records what the tools actually
     observed. Judgement about whether a finding is real happens later, in
     the VerificationAgent.
+
+    Everything that is stored on a finding is redacted first. A tool
+    response may contain a cookie, a bearer token or a credential in the
+    URL it matched, and the finding travels to the API, the database and
+    all four report formats.
     """
 
     name = "DetectionAgent"
@@ -84,9 +89,9 @@ class DetectionAgent(BaseAgent):
                 or profile["url"]
             )
             template_id = item.get("template-id") or item.get("template") or "unknown"
-            summary = f"Template {template_id} matched against {asset}"
+            summary = redact(f"Template {template_id} matched against {asset}")
             severity = self._severity_from_text(str(info.get("severity", "low")))
-            description = info.get("description") or summary
+            description = redact(str(info.get("description") or summary))
             references = [str(ref) for ref in (info.get("reference") or []) if ref]
             classification = info.get("classification") or {}
             cwe = classification.get("cwe-id") if isinstance(classification, dict) else None
@@ -99,13 +104,13 @@ class DetectionAgent(BaseAgent):
                     title=str(title),
                     description=str(description),
                     severity=severity,
-                    asset=str(asset),
-                    attack_surface=str(asset),
+                    asset=redact(str(asset)),
+                    attack_surface=redact(str(asset)),
                     evidence=[
-                        Evidence(source="nuclei", summary=summary, raw=item),
+                        Evidence(source="nuclei", summary=summary, raw=redact(item)),
                     ],
                     references=references,
-                    raw={**item, "cwe": cwe},
+                    raw=redact({**item, "cwe": cwe}),
                 )
             )
         return findings
@@ -127,13 +132,13 @@ class DetectionAgent(BaseAgent):
 
             severity = self.RISKY_PORTS.get(port, Severity.INFORMATIONAL)
             banner = " ".join(part for part in (name, product, version) if part).strip()
-            summary = f"nmap reported {banner or 'a service'} open on port {port} of {host}."
-            description = (
+            summary = redact(f"nmap reported {banner or 'a service'} open on port {port} of {host}.")
+            description = redact(
                 f"Port {port} is reachable and exposes {banner or 'an unidentified service'}. "
                 "Exposed administrative or data services increase the attack surface of the target."
             )
             if severity == Severity.INFORMATIONAL:
-                description = (
+                description = redact(
                     f"Port {port} is open and running {banner or 'an unidentified service'}. "
                     "This is recorded for attack-surface inventory."
                 )
@@ -143,13 +148,15 @@ class DetectionAgent(BaseAgent):
                     id=stable_id("finding", f"nmap:{host}:{port}:{name}"),
                     source="nmap",
                     category="service-exposure",
-                    title=f"Open service {banner or 'unknown'} on {host}:{port}",
+                    title=redact(f"Open service {banner or 'unknown'} on {host}:{port}"),
                     description=description,
                     severity=severity,
-                    asset=f"{host}:{port}",
-                    attack_surface=str(host),
-                    evidence=[Evidence(source="nmap", summary=summary, raw=service)],
-                    raw=service,
+                    asset=redact(f"{host}:{port}"),
+                    attack_surface=redact(str(host)),
+                    evidence=[
+                        Evidence(source="nmap", summary=summary, raw=redact(service))
+                    ],
+                    raw=redact(service),
                 )
             )
         return findings
@@ -173,7 +180,7 @@ class DetectionAgent(BaseAgent):
             if status == 401 or status == 403:
                 severity = Severity.INFORMATIONAL
             title = f"Potentially sensitive path exposed: {fuzz_value}"
-            description = (
+            description = redact(
                 f"ffuf discovered the candidate path or parameter `{fuzz_value}` on {url} "
                 f"responding with status {status}."
             )
@@ -191,8 +198,8 @@ class DetectionAgent(BaseAgent):
                     title=title,
                     description=description,
                     severity=severity,
-                    asset=str(url),
-                    attack_surface=str(url),
+                    asset=redact(str(url)),
+                    attack_surface=redact(str(url)),
                     evidence=[
                         Evidence(
                             source="ffuf",
@@ -201,10 +208,10 @@ class DetectionAgent(BaseAgent):
                                 f"words={item.get('words')} lines={item.get('lines')} "
                                 f"length={item.get('length')}"
                             ),
-                            raw=item,
+                            raw=redact(item),
                         )
                     ],
-                    raw=item,
+                    raw=redact(item),
                 )
             )
         return findings
@@ -216,30 +223,30 @@ class DetectionAgent(BaseAgent):
         technologies = recon_result.get("technologies") or []
         if not technologies:
             return []
-        summary = ", ".join(str(item) for item in technologies)
+        summary = redact(", ".join(str(item) for item in technologies))
         asset = profile["url"]
         return [
             Finding(
                 id=stable_id("finding", f"tech:{asset}:{summary}"),
                 source="httpx",
                 category="technology-disclosure",
-                title=f"Technology fingerprint disclosed: {summary}",
-                description=(
+                title=redact(f"Technology fingerprint disclosed: {summary}"),
+                description=redact(
                     f"The target advertises the following technologies: {summary}. "
                     "Fingerprinted components let an attacker target known vulnerabilities "
                     "for those products."
                 ),
                 severity=Severity.INFORMATIONAL,
-                asset=asset,
-                attack_surface=asset,
+                asset=redact(asset),
+                attack_surface=redact(asset),
                 evidence=[
                     Evidence(
                         source="httpx",
                         summary=f"httpx tech-detect reported: {summary}",
-                        raw={"technologies": technologies},
+                        raw=redact({"technologies": technologies}),
                     )
                 ],
-                raw={"technologies": technologies},
+                raw=redact({"technologies": technologies}),
             )
         ]
 

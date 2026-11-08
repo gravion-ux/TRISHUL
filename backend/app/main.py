@@ -36,6 +36,7 @@ from backend.app.core.security import (
     verify_password,
 )
 from backend.app.core.storage import Storage
+from backend.app.core.url_guard import UrlGuardError
 from backend.app.core.utils import redact, utcnow
 from backend.app.engine.base import Adapters
 from backend.app.engine.master import MasterAgent
@@ -121,6 +122,12 @@ updater_service = UpdaterService(runner, settings, tool_registry)
 rate_limiter = RateLimiter(
     limit=settings.security.rate_limit_requests,
     window_seconds=settings.security.rate_limit_window_seconds,
+)
+# The token endpoint has its own, tighter budget: it is the only route that
+# accepts a password, so it must not be usable to grind credentials.
+login_limiter = RateLimiter(
+    limit=settings.security.login_rate_limit_attempts,
+    window_seconds=settings.security.login_rate_limit_window_seconds,
 )
 token_manager = TokenManager(settings.data_dir / ".api_secret", settings.auth.token_ttl_seconds)
 
@@ -249,11 +256,23 @@ async def get_autofix(_user: str = Auth):
 
 
 @app.post("/api/auth/token", response_model=TokenResponse)
-async def issue_token(request: TokenRequest) -> TokenResponse:
+async def issue_token(request: TokenRequest, http_request: Request) -> TokenResponse:
     """Exchange administrator credentials for a bearer token."""
     if not settings.auth.enabled:
         token, ttl = token_manager.issue("anonymous")
         return TokenResponse(access_token=token, expires_in=ttl)
+
+    # Every attempt -- successful or not -- counts against the budget of the
+    # source address, so a password cannot be guessed one guess at a time.
+    allowed, _remaining, retry_after = login_limiter.allow(
+        f"login:{_client_key(http_request)}"
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many login attempts. Retry in {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     user_ok = hmac.compare_digest(request.username, ADMIN_USER)
     stored_hash = credentials.get("admin:password_hash") or ""
@@ -433,6 +452,8 @@ async def list_provider_models(
             raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}") from exc
     try:
         models = await ai_manager.list_models(kind=kind, base_url=base_url)
+    except UrlGuardError as exc:
+        raise HTTPException(status_code=400, detail=redact(str(exc))) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=redact(str(exc))) from exc
     return {"models": models}
@@ -548,7 +569,10 @@ async def list_integrations(_user: str = Auth):
 
 @app.post("/api/integrations", response_model=IntegrationConfig)
 async def save_integration(request: IntegrationConfigRequest, _user: str = Auth):
-    return integration_manager.save(request)
+    try:
+        return integration_manager.save(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/api/integrations/{name}", response_model=DeleteResponse)

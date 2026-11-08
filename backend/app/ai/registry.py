@@ -26,6 +26,7 @@ from backend.app.core.provider_catalog import PROVIDER_CATALOG as PROVIDER_CATAL
 from backend.app.core.secrets import CredentialStore, provider_secret_name
 from backend.app.core.security import api_key_hint
 from backend.app.core.storage import Storage
+from backend.app.core.url_guard import UrlGuard
 from backend.app.core.utils import utcnow
 from backend.app.models import (
     AiHealth,
@@ -144,6 +145,10 @@ class AIManager:
 
         edition = request.edition or current.edition
         base_url = (request.base_url or descriptor.default_base_url).rstrip("/")
+        # The base URL is operator-supplied. Validate its shape before it is
+        # persisted, so a metadata endpoint or a credential-bearing URL is
+        # rejected instead of being saved and used later.
+        UrlGuard().check(base_url)
         model = request.model or descriptor.default_model
         timeout = request.timeout_seconds or current.timeout_seconds
 

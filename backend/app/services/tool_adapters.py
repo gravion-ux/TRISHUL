@@ -20,7 +20,7 @@ from typing import Any
 from backend.app.core.config import ROOT_DIR, Settings
 from backend.app.core.scope import ScopePolicy
 from backend.app.core.utils import dump_json, ensure_directory, slugify
-from backend.app.models import ScanMode
+from backend.app.models import ScanLimits, ScanMode
 from backend.app.services.tool_runner import ToolExecutionError, ToolRunner
 from backend.app.services.tooling import ToolRegistry
 
@@ -37,6 +37,19 @@ class ToolAdapter:
     def timeout(self) -> int:
         return self.settings.scan.timeout_seconds
 
+    def limits_for(self, limits: ScanLimits | None) -> ScanLimits:
+        """Resolve the limits a run uses.
+
+        A scan carries the limits the operator asked for; the configured
+        defaults are the fallback when it carries none.
+        """
+        if limits is not None:
+            return limits
+        return ScanLimits(
+            thread_limit=self.settings.scan.thread_limit,
+            timeout_seconds=self.settings.scan.timeout_seconds,
+        )
+
 
 class HttpxAdapter(ToolAdapter):
     """Live host detection using projectdiscovery ``httpx``."""
@@ -47,6 +60,7 @@ class HttpxAdapter(ToolAdapter):
         output_dir: Path,
         mode: ScanMode,
         scope: ScopePolicy | None = None,
+        limits: ScanLimits | None = None,
     ) -> list[dict[str, Any]]:
         targets = sorted({target for target in targets if target})
         if not targets:
@@ -57,6 +71,7 @@ class HttpxAdapter(ToolAdapter):
             for target in targets:
                 await scope.check(_host_of(target))
 
+        effective = self.limits_for(limits)
         input_file = output_dir / "httpx-targets.txt"
         input_file.write_text("\n".join(targets), encoding="utf-8")
 
@@ -66,14 +81,16 @@ class HttpxAdapter(ToolAdapter):
             "-status-code",
             "-title",
             "-tech-detect",
-            "-follow-redirects",
+            # Redirects are deliberately not followed: a scanned host
+            # must not be able to steer the scanner into the private
+            # network or into the cloud metadata service.
             "-threads",
-            str(self.settings.scan.thread_limit),
+            str(effective.thread_limit),
             "-l",
             str(input_file),
         ]
         result = await self.runner.run(
-            self.tools.resolve("httpx"), args, timeout=self.timeout
+            self.tools.resolve("httpx"), args, timeout=effective.timeout_seconds
         )
         (output_dir / "httpx.jsonl").write_text(result.stdout, encoding="utf-8")
 
@@ -101,11 +118,13 @@ class NmapAdapter(ToolAdapter):
         output_dir: Path,
         mode: ScanMode,
         scope: ScopePolicy | None = None,
+        limits: ScanLimits | None = None,
     ) -> dict[str, Any]:
         ensure_directory(output_dir)
         if scope is not None:
             await scope.check(host)
 
+        effective = self.limits_for(limits)
         args = ["-Pn", "-T4", "-oX", "-"]
         if mode == ScanMode.DEEP:
             args.extend(["-sV", "--top-ports", "1000"])
@@ -113,7 +132,9 @@ class NmapAdapter(ToolAdapter):
             args.extend(["-F"])
         args.append(host)
 
-        result = await self.runner.run(self.tools.resolve("nmap"), args, timeout=self.timeout)
+        result = await self.runner.run(
+            self.tools.resolve("nmap"), args, timeout=effective.timeout_seconds
+        )
         (output_dir / "nmap.xml").write_text(result.stdout, encoding="utf-8")
 
         services: list[dict[str, Any]] = []
@@ -157,6 +178,7 @@ class NucleiAdapter(ToolAdapter):
         output_dir: Path,
         mode: ScanMode,
         scope: ScopePolicy | None = None,
+        limits: ScanLimits | None = None,
     ) -> list[dict[str, Any]]:
         targets = sorted({target for target in targets if target})
         if not targets:
@@ -167,6 +189,7 @@ class NucleiAdapter(ToolAdapter):
             for target in targets:
                 await scope.check(_host_of(target))
 
+        effective = self.limits_for(limits)
         input_file = output_dir / "nuclei-targets.txt"
         input_file.write_text("\n".join(targets), encoding="utf-8")
 
@@ -187,7 +210,7 @@ class NucleiAdapter(ToolAdapter):
         result = await self.runner.run(
             self.tools.resolve("nuclei"),
             args,
-            timeout=self.timeout,
+            timeout=effective.timeout_seconds,
             allow_non_zero=True,
         )
         (output_dir / "nuclei.jsonl").write_text(result.stdout, encoding="utf-8")
@@ -216,6 +239,7 @@ class FfufAdapter(ToolAdapter):
         output_dir: Path,
         mode: ScanMode,
         scope: ScopePolicy | None = None,
+        limits: ScanLimits | None = None,
     ) -> list[dict[str, Any]]:
         urls = sorted({url for url in urls if url})
         if not urls:
@@ -226,9 +250,11 @@ class FfufAdapter(ToolAdapter):
             for url in urls:
                 await scope.check(_host_of(url))
 
-        semaphore = asyncio.Semaphore(self.settings.scan.thread_limit)
+        effective = self.limits_for(limits)
+        semaphore = asyncio.Semaphore(effective.thread_limit)
+        wordlists = self._budgeted_wordlists(output_dir, len(urls))
         tasks = [
-            self._fuzz_url(index, url, output_dir, semaphore)
+            self._fuzz_url(index, url, output_dir, semaphore, wordlists, effective)
             for index, url in enumerate(urls)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -240,8 +266,50 @@ class FfufAdapter(ToolAdapter):
         dump_json(output_dir / "ffuf-summary.json", flattened)
         return flattened
 
+    def _budgeted_wordlists(self, output_dir: Path, url_count: int) -> tuple[Path, Path]:
+        """Return the wordlists to fuzz with, capped by the request budget.
+
+        ``scan.ffuf_max_requests`` is the number of fuzz words one scan
+        may send. The budget is shared by every ffuf invocation of the
+        scan -- two modes per URL -- so that the cap holds for the whole
+        scan and not for each invocation separately.
+        """
+        budget = max(1, int(self.settings.scan.ffuf_max_requests))
+        per_run = max(1, budget // max(1, 2 * url_count))
+        directory_words = self._trimmed_wordlist(
+            Path(self.settings.wordlist_path),
+            output_dir / "wordlist-directories.txt",
+            per_run,
+        )
+        parameter_words = self._trimmed_wordlist(
+            Path(self.settings.param_wordlist_path),
+            output_dir / "wordlist-parameters.txt",
+            per_run,
+        )
+        return directory_words, parameter_words
+
+    @staticmethod
+    def _trimmed_wordlist(source: Path, destination: Path, limit: int) -> Path:
+        """Copy at most ``limit`` words from ``source`` into ``destination``."""
+        try:
+            lines = source.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            # A missing wordlist is reported by the tool itself.
+            return source
+        words = [line for line in lines if line.strip()][:limit]
+        if not words:
+            return source
+        destination.write_text("\n".join(words) + "\n", encoding="utf-8")
+        return destination
+
     async def _fuzz_url(
-        self, index: int, url: str, output_dir: Path, semaphore: asyncio.Semaphore
+        self,
+        index: int,
+        url: str,
+        output_dir: Path,
+        semaphore: asyncio.Semaphore,
+        wordlists: tuple[Path, Path],
+        limits: ScanLimits,
     ) -> list[dict[str, Any]]:
         async with semaphore:
             slug = slugify(url) or f"target-{index}"
@@ -250,21 +318,28 @@ class FfufAdapter(ToolAdapter):
             prefix = f"{index:03d}-{slug}"
             directory_results = await self._run_ffuf(
                 url=url.rstrip("/") + "/FUZZ",
-                wordlist=str(self.settings.wordlist_path),
+                wordlist=str(wordlists[0]),
                 output_file=output_dir / f"{prefix}-dirs.json",
                 mode_name="directory",
+                limits=limits,
             )
             separator = "&" if "?" in url else "?"
             parameter_results = await self._run_ffuf(
                 url=f"{url}{separator}FUZZ=test",
-                wordlist=str(self.settings.param_wordlist_path),
+                wordlist=str(wordlists[1]),
                 output_file=output_dir / f"{prefix}-params.json",
                 mode_name="parameter",
+                limits=limits,
             )
             return directory_results + parameter_results
 
     async def _run_ffuf(
-        self, url: str, wordlist: str, output_file: Path, mode_name: str
+        self,
+        url: str,
+        wordlist: str,
+        output_file: Path,
+        mode_name: str,
+        limits: ScanLimits,
     ) -> list[dict[str, Any]]:
         args = [
             "-w",
@@ -272,11 +347,11 @@ class FfufAdapter(ToolAdapter):
             "-u",
             url,
             "-t",
-            str(self.settings.scan.thread_limit),
+            str(limits.thread_limit),
             "-mc",
             ",".join(str(code) for code in self.settings.scan.ffuf_status_filter),
             "-maxtime",
-            str(max(30, self.settings.scan.timeout_seconds // 3)),
+            str(max(30, limits.timeout_seconds // 3)),
             "-timeout",
             "10",
             "-of",
@@ -288,7 +363,7 @@ class FfufAdapter(ToolAdapter):
             await self.runner.run(
                 self.tools.resolve("ffuf"),
                 args,
-                timeout=self.timeout,
+                timeout=limits.timeout_seconds,
                 allow_non_zero=True,
             )
         except ToolExecutionError:

@@ -26,6 +26,7 @@ import httpx
 from backend.app.core.config import Settings
 from backend.app.core.secrets import CredentialStore, integration_secret_name
 from backend.app.core.storage import Storage
+from backend.app.core.url_guard import UrlGuard, UrlGuardError, request_with_safe_redirects
 from backend.app.core.utils import redact_text, utcnow_iso
 from backend.app.models import (
     IntegrationAuthType,
@@ -52,6 +53,9 @@ class IntegrationManager:
         self.storage = storage
         self.credentials = credentials
         self.settings = settings
+        # Every outbound request an integration makes is gated by this guard,
+        # including every redirect hop.
+        self.guard = UrlGuard()
         # Per-integration sliding window of call timestamps.
         self._calls: dict[str, list[float]] = {}
         self._lock = asyncio.Lock()
@@ -109,6 +113,12 @@ class IntegrationManager:
 
     def save(self, request: IntegrationConfigRequest) -> IntegrationConfig:
         """Create or replace an integration definition."""
+        # The base URL is operator-supplied and points at an arbitrary host.
+        # Its shape is validated before it is stored, so a metadata endpoint
+        # or a credential-bearing URL never reaches the database.
+        base_url = request.base_url.rstrip("/")
+        UrlGuard().check(base_url)
+
         existing = self.storage.get_integration(request.name)
         created_at = (existing or {}).get("created_at") or utcnow_iso()
 
@@ -120,7 +130,7 @@ class IntegrationManager:
 
         payload = {
             "name": request.name,
-            "base_url": request.base_url.rstrip("/"),
+            "base_url": base_url,
             "path": request.path,
             "method": request.method,
             "auth_type": request.auth_type.value,
@@ -239,11 +249,22 @@ class IntegrationManager:
 
         started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                if method == "POST":
-                    response = await client.post(url, headers=headers, params=query, json=dict(params or {}))
-                else:
-                    response = await client.get(url, headers=headers, params=query)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                request_method = "POST" if method == "POST" else "GET"
+                extra: dict[str, Any] = {"json": dict(params or {})} if method == "POST" else {}
+                response = await request_with_safe_redirects(
+                    client,
+                    url,
+                    guard=self.guard,
+                    method=request_method,
+                    headers=headers,
+                    params=query,
+                    **extra,
+                )
+        except UrlGuardError as exc:
+            raise IntegrationError(
+                f"Integration {name!r} refused an unsafe URL: {redact_text(str(exc))}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise IntegrationError(f"Integration {name!r} request failed: {redact_text(str(exc))}") from exc
 

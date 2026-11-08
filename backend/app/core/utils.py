@@ -19,13 +19,67 @@ _REDACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # threshold is deliberately lower than the real length so a shortened or
     # mistyped key still cannot leak.
     ("google_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{10,}\b")),
+    # A GitHub personal access, OAuth or user-to-server token.
+    ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}\b")),
     # Matches "Authorization: Bearer <token>", "Authorization: <token>" and
     # "bearer=<token>". The scheme is kept, the secret is replaced.
     ("bearer_token", re.compile(r"(?i)\b(authorization|bearer)\b(\s*[:=]\s*)(?:(?:bearer|basic)\s+)?[A-Za-z0-9._\-+/=]{8,}")),
+    # A credential that carries its own scheme but no separator, as it
+    # appears in a captured response body: "Bearer eyJhbGciOi...".
+    ("auth_scheme", re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._\-+/=]{16,}")),
     ("api_key_assignment", re.compile(r"(?i)\b(api[_-]?key|secret|token|password)\b\s*[:=]\s*\S{6,}")),
     ("basic_auth_url", re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s@]+@")),
     ("private_key_block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)),
 )
+
+#: Mapping keys whose value is a credential, whatever the value looks like.
+_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "auth",
+        "authorization",
+        "client_secret",
+        "cookie",
+        "credentials",
+        "passwd",
+        "passphrase",
+        "password",
+        "private_key",
+        "pwd",
+        "secret",
+        "secret_key",
+        "session",
+        "session_id",
+        "set_cookie",
+        "token",
+        "x_api_key",
+    }
+)
+
+#: Key suffixes that mark the value as a credential.
+_SENSITIVE_KEY_SUFFIXES = (
+    "_api_key",
+    "_apikey",
+    "_credential",
+    "_credentials",
+    "_cookie",
+    "_passphrase",
+    "_passwd",
+    "_password",
+    "_secret",
+    "_token",
+)
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    """Return whether a mapping key names a credential."""
+    if not isinstance(key, str):
+        return False
+    normalised = key.strip().lower().replace("-", "_")
+    if normalised in _SENSITIVE_KEYS:
+        return True
+    return normalised.endswith(_SENSITIVE_KEY_SUFFIXES)
 
 
 def utcnow() -> datetime:
@@ -121,6 +175,11 @@ def redact(value: Any) -> Any:
 
     Applied to every log line, error message and report payload so that an
     accidentally captured API key never leaves the process.
+
+    A mapping key that names a credential (``password``, ``api_key``,
+    ``access_token``, ...) is redacted whatever its value looks like: a
+    captured response body is a structured payload, and the key is the
+    only thing that says the value is a secret.
     """
     if isinstance(value, str):
         redacted = value
@@ -134,11 +193,16 @@ def redact(value: Any) -> Any:
                 redacted = pattern.sub(
                     lambda match: f"{match.group(1)}{match.group(2)}***", redacted
                 )
+            elif _label == "auth_scheme":
+                redacted = pattern.sub(lambda match: f"{match.group(1)} ***", redacted)
             else:
                 redacted = pattern.sub("***", redacted)
         return redacted
     if isinstance(value, dict):
-        return {key: redact(item) for key, item in value.items()}
+        return {
+            key: ("***" if _is_sensitive_key(key) else redact(item))
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [redact(item) for item in value]
     if isinstance(value, tuple):

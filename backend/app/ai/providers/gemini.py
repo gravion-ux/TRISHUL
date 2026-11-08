@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 
 from backend.app.ai.base import AIProvider, AIRequest, AIResponse, ProviderError
+from backend.app.core.url_guard import request_with_safe_redirects
 from backend.app.models import ProviderKind
 
 
@@ -32,8 +33,11 @@ class GeminiProvider(AIProvider):
         started = self._timer()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
+                response = await request_with_safe_redirects(
+                    client,
                     f"{self.base_url}/v1beta/models/{self.model}:generateContent",
+                    guard=self.guard,
+                    method="POST",
                     params=self._params(),
                     json=payload,
                 )
@@ -67,8 +71,11 @@ class GeminiProvider(AIProvider):
     async def list_models(self) -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=min(self.timeout, 15)) as client:
-                response = await client.get(
-                    f"{self.base_url}/v1beta/models", params=self._params()
+                response = await request_with_safe_redirects(
+                    client,
+                    f"{self.base_url}/v1beta/models",
+                    guard=self.guard,
+                    params=self._params(),
                 )
         except httpx.HTTPError as exc:
             raise ProviderError(f"Gemini is not reachable at {self.base_url}: {exc}") from exc

@@ -40,8 +40,11 @@ def test_parser_accepts_the_documented_invocation():
 
     assert args.target == "example.com"
     assert args.mode == "deep"
-    assert args.threads == 8
-    assert args.timeout == 900
+    # The limits are not defaulted here: an omitted flag means "use the
+    # configured scan limits", so the configuration is not silently overridden
+    # by a hard-coded number.
+    assert args.threads is None
+    assert args.timeout is None
     assert args.interactive is True
     assert args.yes is False
 

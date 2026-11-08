@@ -22,6 +22,7 @@ class ReconAgent(BaseAgent):
             output_dir,
             scan.mode,
             scope=ctx.scope,
+            limits=ctx.limits,
         )
 
         live_urls: list[str] = []

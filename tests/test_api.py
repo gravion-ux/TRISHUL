@@ -142,6 +142,55 @@ def test_scan_requires_an_authorization_note(client, auth_headers):
     assert response.status_code == 422
 
 
+def test_a_scan_without_limits_uses_the_configured_defaults(
+    client, auth_headers, no_scanner, settings
+):
+    """The limits are optional, and an omitted limit must not be hard-coded.
+
+    The dashboard leaves both fields empty, so the configured values have to
+    survive the trip through the API unchanged.
+    """
+    response = client.post(
+        "/api/scans",
+        headers=auth_headers,
+        json={
+            "target": "example.com",
+            "mode": "quick",
+            "authorized": True,
+            "authorization_note": "TICKET-2026-0001",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    scan_id = response.json()["scan_id"]
+    record = client.get(f"/api/scans/{scan_id}", headers=auth_headers).json()
+
+    assert record["thread_limit"] == settings.scan.thread_limit
+    assert record["timeout_seconds"] == settings.scan.timeout_seconds
+
+
+def test_a_scan_with_limits_stores_the_requested_values(client, auth_headers, no_scanner):
+    response = client.post(
+        "/api/scans",
+        headers=auth_headers,
+        json={
+            "target": "example.com",
+            "mode": "quick",
+            "authorized": True,
+            "authorization_note": "TICKET-2026-0001",
+            "thread_limit": 3,
+            "timeout_seconds": 120,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    scan_id = response.json()["scan_id"]
+    record = client.get(f"/api/scans/{scan_id}", headers=auth_headers).json()
+
+    assert record["thread_limit"] == 3
+    assert record["timeout_seconds"] == 120
+
+
 def test_scan_starts_and_is_retrievable(client, auth_headers, no_scanner):
     response = client.post(
         "/api/scans",

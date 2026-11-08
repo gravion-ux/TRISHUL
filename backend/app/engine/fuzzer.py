@@ -21,7 +21,7 @@ class FuzzerAgent(BaseAgent):
         scan = ctx.scan
         output_dir = ctx.scan_dir / "artifacts" / "fuzz"
         results = await ctx.adapters.ffuf.run(
-            live_urls, output_dir, scan.mode, scope=ctx.scope
+            live_urls, output_dir, scan.mode, scope=ctx.scope, limits=ctx.limits
         )
         by_mode: dict[str, int] = {}
         for item in results:
