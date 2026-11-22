@@ -119,6 +119,9 @@ class ToolRunner:
                 stdin=asyncio.subprocess.PIPE if input_text is not None else asyncio.subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
                 env=merged_env,
+                # Own session => own process group, so _terminate's killpg
+                # kills the tool's group and never the caller's group.
+                start_new_session=True,
             )
         except OSError as exc:
             raise ToolExecutionError(f"Could not start {resolved}: {exc}") from exc
