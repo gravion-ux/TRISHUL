@@ -101,8 +101,11 @@ class FakeTools:
 
 
 @pytest.fixture()
-def updater(settings, tool_registry):
-    return UpdaterService(FakeRunner(), settings, tool_registry)
+def updater(settings):
+    # FakeTools, not the real registry: the real registry raises for any
+    # tool that is not installed on this machine, which would make these
+    # tests depend on nuclei being present.
+    return UpdaterService(FakeRunner(), settings, FakeTools())
 
 
 @pytest.mark.asyncio
