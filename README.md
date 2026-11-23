@@ -1,6 +1,7 @@
 # TRISHUL
 
 [![codecov](https://codecov.io/gh/gravion-ux/TRISHUL/branch/main/graph/badge.svg)](https://codecov.io/gh/gravion-ux/TRISHUL)
+[![CI](https://github.com/gravion-ux/TRISHUL/actions/workflows/ci.yml/badge.svg)](https://github.com/gravion-ux/TRISHUL/actions/workflows/ci.yml)
 
 **TRISHUL** is an authorized-scope, AI-powered security testing platform. It runs a real
 attack-surface pipeline against hosts you are explicitly authorized to test, drives four
