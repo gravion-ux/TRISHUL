@@ -805,3 +805,14 @@ async def test_report_agent_uses_ai_summary(ctx):
     await agent.run(ctx)
 
     assert "deep scan" in ctx.scan.artifacts["executive_summary"]
+
+
+def test_report_agent_default_reporting_uses_application_settings(ctx):
+    """Without an explicit ReportingService, the agent must report with the
+    application settings (configuration file + environment overrides), not
+    bare model defaults."""
+    from backend.app.core.config import get_settings
+
+    agent = ReportAgent(ctx.storage, None)
+
+    assert agent.reporting.settings is get_settings()
