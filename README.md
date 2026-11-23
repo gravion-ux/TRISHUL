@@ -1,5 +1,7 @@
 # TRISHUL
 
+[![codecov](https://codecov.io/gh/gravion-ux/TRISHUL/branch/main/graph/badge.svg)](https://codecov.io/gh/gravion-ux/TRISHUL)
+
 **TRISHUL** is an authorized-scope, AI-powered security testing platform. It runs a real
 attack-surface pipeline against hosts you are explicitly authorized to test, drives four
 real external binaries (`httpx`, `nuclei`, `ffuf`, `nmap`), and uses AI to rank, explain
