@@ -31,7 +31,7 @@ class ReportAgent(BaseAgent):
 
     def __init__(self, storage, ai=None, reporting: ReportingService | None = None) -> None:
         super().__init__(storage, ai)
-        self.reporting = reporting or ReportingService(_settings_placeholder())
+        self.reporting = reporting or ReportingService(_default_settings())
 
     async def run(self, ctx: AgentContext) -> dict[str, str]:
         """Write every report format and return their paths."""
@@ -65,12 +65,16 @@ class ReportAgent(BaseAgent):
         return summary.strip() if summary else ""
 
 
-def _settings_placeholder():
-    """Build a minimal Settings instance for the default reporter.
+def _default_settings():
+    """Load the application settings for the default reporter.
 
-    The ReportAgent is normally constructed with the application settings;
-    this fallback keeps the class usable in isolation (tests, scripts).
+    The ReportAgent is normally constructed with a ReportingService built
+    from the application settings (see MasterAgent); this fallback is only
+    exercised when the agent is built in isolation (tests, scripts). It
+    goes through the same loader as the rest of the app, so the reporter
+    honours the configuration file and the environment overrides instead
+    of silently running on bare model defaults.
     """
-    from backend.app.core.config import Settings
+    from backend.app.core.config import get_settings
 
-    return Settings()
+    return get_settings()

@@ -84,9 +84,23 @@ class VerificationAgent(BaseAgent):
         Redirects are never followed automatically: every hop is
         re-validated against the scope policy by
         :func:`request_with_safe_redirects`.
+
+        ``trust_env`` is disabled on purpose. Verification probes contact
+        scan targets directly, gated by the scope policy and the SSRF
+        guard; silently routing them through whatever ``HTTP_PROXY`` /
+        ``ALL_PROXY`` the ambient environment defines would hand target
+        traffic to a third party and let ``NO_PROXY`` semantics override
+        the engagement's own scope decisions. It also makes client
+        construction depend on the environment's proxy variables: with
+        httpx >= 0.28, an unbracketed IPv6 entry in ``NO_PROXY`` (e.g.
+        ``::1``) is misparsed as a port and raises ``InvalidURL`` before
+        any request is made.
         """
         return httpx.AsyncClient(
-            timeout=self.request_timeout, follow_redirects=False, verify=verify
+            timeout=self.request_timeout,
+            follow_redirects=False,
+            verify=verify,
+            trust_env=False,
         )
 
     async def run(
