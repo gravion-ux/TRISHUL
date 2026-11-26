@@ -1,12 +1,10 @@
+<p align="center"><img src="assets/banner.svg" alt="TRISHUL banner" width="100%"/></p>
+
 # TRISHUL
 
-[![codecov](https://codecov.io/gh/gravion-ux/TRISHUL/branch/main/graph/badge.svg)](https://codecov.io/gh/gravion-ux/TRISHUL)
-[![CI](https://github.com/gravion-ux/TRISHUL/actions/workflows/ci.yml/badge.svg)](https://github.com/gravion-ux/TRISHUL/actions/workflows/ci.yml)
+[![CI](https://github.com/gravion-ux/TRISHUL/actions/workflows/ci.yml/badge.svg)](https://github.com/gravion-ux/TRISHUL/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**TRISHUL** is an authorized-scope, AI-powered security testing platform. It runs a real
-attack-surface pipeline against hosts you are explicitly authorized to test, drives four
-real external binaries (`httpx`, `nuclei`, `ffuf`, `nmap`), and uses AI to rank, explain
-and report what it found.
+**TRISHUL is an authorized-scope, AI-powered security testing platform.**
 
 TRISHUL ships in two editions that run the **same core codebase**:
 
